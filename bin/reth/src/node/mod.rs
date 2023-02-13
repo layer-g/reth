@@ -135,10 +135,11 @@ impl Command {
             reth_transaction_pool::test_utils::testing_pool(),
             network.clone(),
             TransportRpcModuleConfig::default()
-                .with_http(vec![RethRpcModule::Admin, RethRpcModule::Eth]),
-            RpcServerConfig::default().with_http(Default::default()),
-        )
-        .await?;
+                // .with_http(vec![RethRpcModule::Admin, RethRpcModule::Eth]),
+                .with_http(reth_rpc_builder::RpcModuleConfig::All),
+        RpcServerConfig::default().with_http(Default::default()),
+    )
+    .await?;
         info!(target: "reth::cli", "Started RPC server");
 
         if let Some(uri) = rpc_server.http_url() {
