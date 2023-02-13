@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use reth_interfaces::Result;
 use reth_network_api::NetworkInfo;
 use reth_primitives::{
-    rpc::{BlockId, BlockNumber},
-    Address, ChainInfo, TransactionSigned, H256, U64,
+    rpc::{BlockId, BlockNumber, H160},
+    Address, ChainInfo, TransactionSigned, H256, U64, U256,
 };
 use reth_provider::{BlockProvider, StateProviderFactory};
 
@@ -40,6 +40,9 @@ pub trait EthApiSpec: Send + Sync {
 
     /// Returns the transaction by hash
     async fn transaction_by_hash(&self, hash: H256) -> Result<Option<TransactionSigned>>;
+
+    /// Returns the balance of a given account.
+    async fn get_balance(&self, address: H160, number: Option<BlockNumber>) -> Result<U256>;
 }
 
 /// `Eth` API implementation.
@@ -181,6 +184,10 @@ where
     }
 
     async fn transaction_by_hash(&self, _hash: H256) -> Result<Option<TransactionSigned>> {
+        todo!()
+    }
+
+    async fn get_balance(&self, address: H160, block_number: Option<BlockNumber>) -> Result<U256> {
         todo!()
     }
 }
