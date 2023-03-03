@@ -320,6 +320,7 @@ fn create_txn_env(block_env: &BlockEnv, request: CallRequest) -> EthResult<TxEnv
         data: data.map(|data| data.0).unwrap_or_default(),
         chain_id: chain_id.map(|c| c.as_u64()),
         access_list: access_list.map(AccessList::flattened).unwrap_or_default(),
+        category: Default::default(),
     };
 
     Ok(env)

@@ -458,6 +458,7 @@ checksum = "1bc2832c24239b0141d5674bb9174f9d68a8b5b3f2753311927c172ca46f7e9c"
 dependencies = [
  "funty",
  "radium 0.7.0",
+ "serde",
  "tap",
  "wyz",
 ]
@@ -5207,7 +5208,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.0.0"
-source = "git+https://github.com/bluealloy/revm#4d2f0741c5f9daec0ceb7cc7733d65ea4c496170"
+source = "git+https://github.com/layer-g/revm?branch=tan#e1a4a2465c28dad69e7df5be515648093d3b4bc3"
 dependencies = [
  "auto_impl",
  "revm-interpreter",
@@ -5217,8 +5218,9 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.0.0"
-source = "git+https://github.com/bluealloy/revm#4d2f0741c5f9daec0ceb7cc7733d65ea4c496170"
+source = "git+https://github.com/layer-g/revm?branch=tan#e1a4a2465c28dad69e7df5be515648093d3b4bc3"
 dependencies = [
+ "bitvec 1.0.1",
  "derive_more",
  "enumn",
  "revm-primitives",
@@ -5228,7 +5230,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.0"
-source = "git+https://github.com/bluealloy/revm#4d2f0741c5f9daec0ceb7cc7733d65ea4c496170"
+source = "git+https://github.com/layer-g/revm?branch=tan#e1a4a2465c28dad69e7df5be515648093d3b4bc3"
 dependencies = [
  "k256",
  "num",
@@ -5244,10 +5246,11 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.0.0"
-source = "git+https://github.com/bluealloy/revm#4d2f0741c5f9daec0ceb7cc7733d65ea4c496170"
+source = "git+https://github.com/layer-g/revm?branch=tan#e1a4a2465c28dad69e7df5be515648093d3b4bc3"
 dependencies = [
  "arbitrary",
  "auto_impl",
+ "bitvec 1.0.1",
  "bytes",
  "derive_more",
  "enumn",
