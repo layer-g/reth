@@ -1,10 +1,10 @@
 //! Collection of methods for block validation.
-use reth_interfaces::{consensus::Error, Result as RethResult};
+use reth_interfaces::{consensus::ConsensusError, Result as RethResult};
 use reth_primitives::{
-    BlockNumber, ChainSpec, Hardfork, Header, SealedBlock, SealedHeader, Transaction,
-    TransactionSignedEcRecovered, TxEip1559, TxEip2930, TxLegacy,
+    BlockNumber, ChainSpec, Hardfork, Header, InvalidTransactionError, SealedBlock, SealedHeader,
+    Transaction, TransactionSignedEcRecovered, TxEip1559, TxEip2930, TxLegacy,
 };
-use reth_provider::{AccountProvider, HeaderProvider};
+use reth_provider::{AccountProvider, HeaderProvider, WithdrawalsProvider};
 use std::{
     collections::{hash_map::Entry, HashMap},
     time::SystemTime,
@@ -16,10 +16,10 @@ use reth_primitives::constants;
 pub fn validate_header_standalone(
     header: &SealedHeader,
     chain_spec: &ChainSpec,
-) -> Result<(), Error> {
+) -> Result<(), ConsensusError> {
     // Gas used needs to be less then gas limit. Gas used is going to be check after execution.
     if header.gas_used > header.gas_limit {
-        return Err(Error::HeaderGasUsedExceedsGasLimit {
+        return Err(ConsensusError::HeaderGasUsedExceedsGasLimit {
             gas_used: header.gas_used,
             gas_limit: header.gas_limit,
         })
@@ -29,31 +29,34 @@ pub fn validate_header_standalone(
     let present_timestamp =
         SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
     if header.timestamp > present_timestamp {
-        return Err(Error::TimestampIsInFuture { timestamp: header.timestamp, present_timestamp })
+        return Err(ConsensusError::TimestampIsInFuture {
+            timestamp: header.timestamp,
+            present_timestamp,
+        })
     }
 
     // From yellow paper: extraData: An arbitrary byte array containing data
     // relevant to this block. This must be 32 bytes or fewer; formally Hx.
     if header.extra_data.len() > 32 {
-        return Err(Error::ExtraDataExceedsMax { len: header.extra_data.len() })
+        return Err(ConsensusError::ExtraDataExceedsMax { len: header.extra_data.len() })
     }
 
     // Check if base fee is set.
     if chain_spec.fork(Hardfork::London).active_at_block(header.number) &&
         header.base_fee_per_gas.is_none()
     {
-        return Err(Error::BaseFeeMissing)
+        return Err(ConsensusError::BaseFeeMissing)
     }
 
     // EIP-4895: Beacon chain push withdrawals as operations
     if chain_spec.fork(Hardfork::Shanghai).active_at_timestamp(header.timestamp) &&
         header.withdrawals_root.is_none()
     {
-        return Err(Error::WithdrawalsRootMissing)
+        return Err(ConsensusError::WithdrawalsRootMissing)
     } else if !chain_spec.fork(Hardfork::Shanghai).active_at_timestamp(header.timestamp) &&
         header.withdrawals_root.is_some()
     {
-        return Err(Error::WithdrawalsRootUnexpected)
+        return Err(ConsensusError::WithdrawalsRootUnexpected)
     }
 
     Ok(())
@@ -67,21 +70,21 @@ pub fn validate_transaction_regarding_header(
     chain_spec: &ChainSpec,
     at_block_number: BlockNumber,
     base_fee: Option<u64>,
-) -> Result<(), Error> {
+) -> Result<(), ConsensusError> {
     let chain_id = match transaction {
         Transaction::Legacy(TxLegacy { chain_id, .. }) => {
             // EIP-155: Simple replay attack protection: https://eips.ethereum.org/EIPS/eip-155
             if chain_spec.fork(Hardfork::SpuriousDragon).active_at_block(at_block_number) &&
                 chain_id.is_some()
             {
-                return Err(Error::TransactionOldLegacyChainId)
+                return Err(InvalidTransactionError::OldLegacyChainId.into())
             }
             *chain_id
         }
         Transaction::Eip2930(TxEip2930 { chain_id, .. }) => {
             // EIP-2930: Optional access lists: https://eips.ethereum.org/EIPS/eip-2930 (New transaction type)
             if !chain_spec.fork(Hardfork::Berlin).active_at_block(at_block_number) {
-                return Err(Error::TransactionEip2930Disabled)
+                return Err(InvalidTransactionError::Eip2930Disabled.into())
             }
             Some(*chain_id)
         }
@@ -93,13 +96,13 @@ pub fn validate_transaction_regarding_header(
         }) => {
             // EIP-1559: Fee market change for ETH 1.0 chain https://eips.ethereum.org/EIPS/eip-1559
             if !chain_spec.fork(Hardfork::Berlin).active_at_block(at_block_number) {
-                return Err(Error::TransactionEip1559Disabled)
+                return Err(InvalidTransactionError::Eip1559Disabled.into())
             }
 
             // EIP-1559: add more constraints to the tx validation
             // https://github.com/ethereum/EIPs/pull/3594
             if max_priority_fee_per_gas > max_fee_per_gas {
-                return Err(Error::TransactionPriorityFeeMoreThenMaxFee)
+                return Err(InvalidTransactionError::PriorityFeeMoreThenMaxFee.into())
             }
 
             Some(*chain_id)
@@ -107,14 +110,14 @@ pub fn validate_transaction_regarding_header(
     };
     if let Some(chain_id) = chain_id {
         if chain_id != chain_spec.chain().id() {
-            return Err(Error::TransactionChainId)
+            return Err(InvalidTransactionError::ChainIdMismatch.into())
         }
     }
     // Check basefee and few checks that are related to that.
     // https://github.com/ethereum/EIPs/pull/3594
     if let Some(base_fee_per_gas) = base_fee {
         if transaction.max_fee_per_gas() < base_fee_per_gas as u128 {
-            return Err(Error::TransactionMaxFeeLessThenBaseFee)
+            return Err(InvalidTransactionError::MaxFeeLessThenBaseFee.into())
         }
     }
 
@@ -155,7 +158,10 @@ pub fn validate_all_transaction_regarding_block_and_nonces<
                 // Signer account shouldn't have bytecode. Presence of bytecode means this is a
                 // smartcontract.
                 if account.has_bytecode() {
-                    return Err(Error::SignerAccountHasBytecode.into())
+                    return Err(ConsensusError::from(
+                        InvalidTransactionError::SignerAccountHasBytecode,
+                    )
+                    .into())
                 }
                 let nonce = account.nonce;
                 entry.insert(account.nonce + 1);
@@ -165,7 +171,7 @@ pub fn validate_all_transaction_regarding_block_and_nonces<
 
         // check nonce
         if transaction.nonce() != nonce {
-            return Err(Error::TransactionNonceNotConsistent.into())
+            return Err(ConsensusError::from(InvalidTransactionError::NonceNotConsistent).into())
         }
     }
 
@@ -178,13 +184,16 @@ pub fn validate_all_transaction_regarding_block_and_nonces<
 /// - Compares the transactions root in the block header to the block body
 /// - Pre-execution transaction validation
 /// - (Optionally) Compares the receipts root in the block header to the block body
-pub fn validate_block_standalone(block: &SealedBlock, chain_spec: &ChainSpec) -> Result<(), Error> {
+pub fn validate_block_standalone(
+    block: &SealedBlock,
+    chain_spec: &ChainSpec,
+) -> Result<(), ConsensusError> {
     // Check ommers hash
     // TODO(onbjerg): This should probably be accessible directly on [Block]
     let ommers_hash =
         reth_primitives::proofs::calculate_ommers_root(block.ommers.iter().map(|h| h.as_ref()));
     if block.header.ommers_hash != ommers_hash {
-        return Err(Error::BodyOmmersHashDiff {
+        return Err(ConsensusError::BodyOmmersHashDiff {
             got: ommers_hash,
             expected: block.header.ommers_hash,
         })
@@ -194,7 +203,7 @@ pub fn validate_block_standalone(block: &SealedBlock, chain_spec: &ChainSpec) ->
     // TODO(onbjerg): This should probably be accessible directly on [Block]
     let transaction_root = reth_primitives::proofs::calculate_transaction_root(block.body.iter());
     if block.header.transactions_root != transaction_root {
-        return Err(Error::BodyTransactionRootDiff {
+        return Err(ConsensusError::BodyTransactionRootDiff {
             got: transaction_root,
             expected: block.header.transactions_root,
         })
@@ -202,13 +211,14 @@ pub fn validate_block_standalone(block: &SealedBlock, chain_spec: &ChainSpec) ->
 
     // EIP-4895: Beacon chain push withdrawals as operations
     if chain_spec.fork(Hardfork::Shanghai).active_at_timestamp(block.timestamp) {
-        let withdrawals = block.withdrawals.as_ref().ok_or(Error::BodyWithdrawalsMissing)?;
+        let withdrawals =
+            block.withdrawals.as_ref().ok_or(ConsensusError::BodyWithdrawalsMissing)?;
         let withdrawals_root =
             reth_primitives::proofs::calculate_withdrawals_root(withdrawals.iter());
         let header_withdrawals_root =
-            block.withdrawals_root.as_ref().ok_or(Error::WithdrawalsRootMissing)?;
+            block.withdrawals_root.as_ref().ok_or(ConsensusError::WithdrawalsRootMissing)?;
         if withdrawals_root != *header_withdrawals_root {
-            return Err(Error::BodyWithdrawalsRootDiff {
+            return Err(ConsensusError::BodyWithdrawalsRootDiff {
                 got: withdrawals_root,
                 expected: *header_withdrawals_root,
             })
@@ -220,7 +230,10 @@ pub fn validate_block_standalone(block: &SealedBlock, chain_spec: &ChainSpec) ->
             for withdrawal in withdrawals.iter().skip(1) {
                 let expected = prev_index + 1;
                 if expected != withdrawal.index {
-                    return Err(Error::WithdrawalIndexInvalid { got: withdrawal.index, expected })
+                    return Err(ConsensusError::WithdrawalIndexInvalid {
+                        got: withdrawal.index,
+                        expected,
+                    })
                 }
                 prev_index = withdrawal.index;
             }
@@ -261,10 +274,10 @@ pub fn validate_header_regarding_parent(
     parent: &SealedHeader,
     child: &SealedHeader,
     chain_spec: &ChainSpec,
-) -> Result<(), Error> {
+) -> Result<(), ConsensusError> {
     // Parent number is consistent.
     if parent.number + 1 != child.number {
-        return Err(Error::ParentBlockNumberMismatch {
+        return Err(ConsensusError::ParentBlockNumberMismatch {
             parent_block_number: parent.number,
             block_number: child.number,
         })
@@ -272,7 +285,7 @@ pub fn validate_header_regarding_parent(
 
     // timestamp in past check
     if child.timestamp < parent.timestamp {
-        return Err(Error::TimestampIsInPast {
+        return Err(ConsensusError::TimestampIsInPast {
             parent_timestamp: parent.timestamp,
             timestamp: child.timestamp,
         })
@@ -295,13 +308,13 @@ pub fn validate_header_regarding_parent(
     // Check gas limit, max diff between child/parent gas_limit should be  max_diff=parent_gas/1024
     if child.gas_limit > parent_gas_limit {
         if child.gas_limit - parent_gas_limit >= parent_gas_limit / 1024 {
-            return Err(Error::GasLimitInvalidIncrease {
+            return Err(ConsensusError::GasLimitInvalidIncrease {
                 parent_gas_limit,
                 child_gas_limit: child.gas_limit,
             })
         }
     } else if parent_gas_limit - child.gas_limit >= parent_gas_limit / 1024 {
-        return Err(Error::GasLimitInvalidDecrease {
+        return Err(ConsensusError::GasLimitInvalidDecrease {
             parent_gas_limit,
             child_gas_limit: child.gas_limit,
         })
@@ -309,7 +322,7 @@ pub fn validate_header_regarding_parent(
 
     // EIP-1559 check base fee
     if chain_spec.fork(Hardfork::London).active_at_block(child.number) {
-        let base_fee = child.base_fee_per_gas.ok_or(Error::BaseFeeMissing)?;
+        let base_fee = child.base_fee_per_gas.ok_or(ConsensusError::BaseFeeMissing)?;
 
         let expected_base_fee =
             if chain_spec.fork(Hardfork::London).transitions_at_block(child.number) {
@@ -319,11 +332,11 @@ pub fn validate_header_regarding_parent(
                 calculate_next_block_base_fee(
                     parent.gas_used,
                     parent.gas_limit,
-                    parent.base_fee_per_gas.ok_or(Error::BaseFeeMissing)?,
+                    parent.base_fee_per_gas.ok_or(ConsensusError::BaseFeeMissing)?,
                 )
             };
         if expected_base_fee != base_fee {
-            return Err(Error::BaseFeeDiff { expected: expected_base_fee, got: base_fee })
+            return Err(ConsensusError::BaseFeeDiff { expected: expected_base_fee, got: base_fee })
         }
     }
 
@@ -335,9 +348,10 @@ pub fn validate_header_regarding_parent(
 /// Checks:
 ///  If we already know the block.
 ///  If parent is known
+///  If withdarwals are valid
 ///
 /// Returns parent block header
-pub fn validate_block_regarding_chain<PROV: HeaderProvider>(
+pub fn validate_block_regarding_chain<PROV: HeaderProvider + WithdrawalsProvider>(
     block: &SealedBlock,
     provider: &PROV,
 ) -> RethResult<SealedHeader> {
@@ -345,20 +359,47 @@ pub fn validate_block_regarding_chain<PROV: HeaderProvider>(
 
     // Check if block is known.
     if provider.is_known(&hash)? {
-        return Err(Error::BlockKnown { hash, number: block.header.number }.into())
+        return Err(ConsensusError::BlockKnown { hash, number: block.header.number }.into())
     }
 
     // Check if parent is known.
     let parent = provider
         .header(&block.parent_hash)?
-        .ok_or(Error::ParentUnknown { hash: block.parent_hash })?;
+        .ok_or(ConsensusError::ParentUnknown { hash: block.parent_hash })?;
+
+    // Check if withdrawals are valid.
+    if let Some(withdrawals) = &block.withdrawals {
+        if !withdrawals.is_empty() {
+            let latest_withdrawal = provider.latest_withdrawal()?;
+            match latest_withdrawal {
+                Some(withdrawal) => {
+                    if withdrawal.index + 1 != withdrawals.first().unwrap().index {
+                        return Err(ConsensusError::WithdrawalIndexInvalid {
+                            got: withdrawals.first().unwrap().index,
+                            expected: withdrawal.index + 1,
+                        }
+                        .into())
+                    }
+                }
+                None => {
+                    if withdrawals.first().unwrap().index != 0 {
+                        return Err(ConsensusError::WithdrawalIndexInvalid {
+                            got: withdrawals.first().unwrap().index,
+                            expected: 0,
+                        }
+                        .into())
+                    }
+                }
+            }
+        }
+    }
 
     // Return parent header.
     Ok(parent.seal(block.parent_hash))
 }
 
 /// Full validation of block before execution.
-pub fn full_validation<Provider: HeaderProvider + AccountProvider>(
+pub fn full_validation<Provider: HeaderProvider + AccountProvider + WithdrawalsProvider>(
     block: &SealedBlock,
     provider: Provider,
     chain_spec: &ChainSpec,
@@ -372,7 +413,7 @@ pub fn full_validation<Provider: HeaderProvider + AccountProvider>(
     let transactions = block
         .body
         .iter()
-        .map(|tx| tx.try_ecrecovered().ok_or(Error::TransactionSignerRecoveryError))
+        .map(|tx| tx.try_ecrecovered().ok_or(ConsensusError::TransactionSignerRecoveryError))
         .collect::<Result<Vec<_>, _>>()?;
 
     validate_all_transaction_regarding_block_and_nonces(
@@ -388,10 +429,11 @@ pub fn full_validation<Provider: HeaderProvider + AccountProvider>(
 mod tests {
     use super::*;
     use assert_matches::assert_matches;
-    use reth_interfaces::Result;
+    use mockall::mock;
+    use reth_interfaces::{Error::Consensus, Result};
     use reth_primitives::{
-        hex_literal::hex, proofs, Account, Address, BlockHash, Bytes, ChainSpecBuilder, Header,
-        Signature, TransactionKind, TransactionSigned, Withdrawal, MAINNET, U256,
+        hex_literal::hex, proofs, Account, Address, BlockHash, BlockId, Bytes, ChainSpecBuilder,
+        Header, Signature, TransactionKind, TransactionSigned, Withdrawal, MAINNET, U256,
     };
     use std::ops::RangeBounds;
 
@@ -422,20 +464,45 @@ mod tests {
         }
     }
 
+    mock! {
+        WithdrawalsProvider {}
+
+        impl WithdrawalsProvider for WithdrawalsProvider {
+            fn latest_withdrawal(&self) -> Result<Option<Withdrawal>> ;
+
+            fn withdrawals_by_block(
+                &self,
+                _id: BlockId,
+                _timestamp: u64,
+            ) -> RethResult<Option<Vec<Withdrawal>>> ;
+        }
+    }
+
     struct Provider {
         is_known: bool,
         parent: Option<Header>,
         account: Option<Account>,
+        withdrawals_provider: MockWithdrawalsProvider,
     }
 
     impl Provider {
         /// New provider with parent
         fn new(parent: Option<Header>) -> Self {
-            Self { is_known: false, parent, account: None }
+            Self {
+                is_known: false,
+                parent,
+                account: None,
+                withdrawals_provider: MockWithdrawalsProvider::new(),
+            }
         }
         /// New provider where is_known is always true
         fn new_known() -> Self {
-            Self { is_known: true, parent: None, account: None }
+            Self {
+                is_known: true,
+                parent: None,
+                account: None,
+                withdrawals_provider: MockWithdrawalsProvider::new(),
+            }
         }
     }
 
@@ -468,6 +535,20 @@ mod tests {
 
         fn headers_range(&self, _range: impl RangeBounds<BlockNumber>) -> Result<Vec<Header>> {
             Ok(vec![])
+        }
+    }
+
+    impl WithdrawalsProvider for Provider {
+        fn latest_withdrawal(&self) -> Result<Option<Withdrawal>> {
+            self.withdrawals_provider.latest_withdrawal()
+        }
+
+        fn withdrawals_by_block(
+            &self,
+            _id: BlockId,
+            _timestamp: u64,
+        ) -> RethResult<Option<Vec<Withdrawal>>> {
+            self.withdrawals_provider.withdrawals_by_block(_id, _timestamp)
         }
     }
 
@@ -512,7 +593,7 @@ mod tests {
             mix_hash: hex!("0000000000000000000000000000000000000000000000000000000000000000").into(),
             nonce: 0x0000000000000000,
             base_fee_per_gas: 0x28f0001df.into(),
-            withdrawals_root: None
+            withdrawals_root: None,
         };
         // size: 0x9b5
 
@@ -543,7 +624,7 @@ mod tests {
 
         assert_eq!(
             full_validation(&block, provider, &MAINNET),
-            Err(Error::BlockKnown { hash: block.hash(), number: block.number }.into()),
+            Err(ConsensusError::BlockKnown { hash: block.hash(), number: block.number }.into()),
             "Should fail with error"
         );
     }
@@ -579,7 +660,7 @@ mod tests {
                 provider,
                 &MAINNET,
             ),
-            Err(Error::TransactionNonceNotConsistent.into())
+            Err(ConsensusError::from(InvalidTransactionError::NonceNotConsistent).into())
         )
     }
 
@@ -598,7 +679,7 @@ mod tests {
                 provider,
                 &MAINNET,
             ),
-            Err(Error::TransactionNonceNotConsistent.into())
+            Err(ConsensusError::from(InvalidTransactionError::NonceNotConsistent).into())
         );
     }
 
@@ -636,13 +717,46 @@ mod tests {
         let block = create_block_with_withdrawals(&[100, 102]);
         assert_matches!(
             validate_block_standalone(&block, &chain_spec),
-            Err(Error::WithdrawalIndexInvalid { .. })
+            Err(ConsensusError::WithdrawalIndexInvalid { .. })
         );
         let block = create_block_with_withdrawals(&[5, 6, 7, 9]);
         assert_matches!(
             validate_block_standalone(&block, &chain_spec),
-            Err(Error::WithdrawalIndexInvalid { .. })
+            Err(ConsensusError::WithdrawalIndexInvalid { .. })
         );
+
+        let (_, parent) = mock_block();
+        let mut provider = Provider::new(Some(parent.clone()));
+        // Withdrawal index should be 0 if there are no withdrawals in the chain
+        let block = create_block_with_withdrawals(&[1, 2, 3]);
+        provider.withdrawals_provider.expect_latest_withdrawal().return_const(Ok(None));
+        assert_matches!(
+            validate_block_regarding_chain(&block, &provider),
+            Err(Consensus(ConsensusError::WithdrawalIndexInvalid { got: 1, expected: 0 }))
+        );
+        let block = create_block_with_withdrawals(&[0, 1, 2]);
+        let res = validate_block_regarding_chain(&block, &provider);
+        assert!(res.is_ok());
+
+        // Withdrawal index should be the last withdrawal index + 1
+        let mut provider = Provider::new(Some(parent));
+        let block = create_block_with_withdrawals(&[4, 5, 6]);
+        provider
+            .withdrawals_provider
+            .expect_latest_withdrawal()
+            .return_const(Ok(Some(Withdrawal { index: 2, ..Default::default() })));
+        assert_matches!(
+            validate_block_regarding_chain(&block, &provider),
+            Err(Consensus(ConsensusError::WithdrawalIndexInvalid { got: 4, expected: 3 }))
+        );
+
+        let block = create_block_with_withdrawals(&[3, 4, 5]);
+        provider
+            .withdrawals_provider
+            .expect_latest_withdrawal()
+            .return_const(Ok(Some(Withdrawal { index: 2, ..Default::default() })));
+        let res = validate_block_regarding_chain(&block, &provider);
+        assert!(res.is_ok());
     }
 
     #[test]

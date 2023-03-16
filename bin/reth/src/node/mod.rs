@@ -20,6 +20,7 @@ use reth_db::{
     tables,
     transaction::DbTx,
 };
+use reth_discv4::DEFAULT_DISCOVERY_PORT;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
@@ -52,7 +53,11 @@ use reth_stages::{
     stages::{ExecutionStage, SenderRecoveryStage, TotalDifficultyStage, FINISH},
 };
 use reth_tasks::TaskExecutor;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    path::PathBuf,
+    sync::Arc,
+};
 use tokio::sync::{mpsc::unbounded_channel, watch};
 use tracing::*;
 
@@ -90,7 +95,7 @@ pub struct Command {
         default_value = "mainnet",
         value_parser = genesis_value_parser
     )]
-    chain: ChainSpec,
+    chain: Arc<ChainSpec>,
 
     /// Enable Prometheus metrics.
     ///
@@ -342,11 +347,11 @@ impl Command {
             NetworkManager::builder(config).await?.request_handler(client).split_with_handle();
 
         let known_peers_file = self.network.persistent_peers_file();
-        task_executor.spawn_critical_with_signal("p2p network task", |shutdown| async move {
-            run_network_until_shutdown(shutdown, network, known_peers_file).await
+        task_executor.spawn_critical_with_signal("p2p network task", |shutdown| {
+            run_network_until_shutdown(shutdown, network, known_peers_file)
         });
 
-        task_executor.spawn_critical("p2p eth request handler", async move { eth.await });
+        task_executor.spawn_critical("p2p eth request handler", eth);
 
         // TODO spawn pool
 
@@ -417,6 +422,10 @@ impl Command {
             .network_config(config, self.chain.clone())
             .with_task_executor(Box::new(executor))
             .set_head(head)
+            .listener_addr(SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::UNSPECIFIED,
+                self.network.discovery.port.unwrap_or(DEFAULT_DISCOVERY_PORT),
+            )))
             .build(ShareableDatabase::new(db, self.chain.clone()))
     }
 
@@ -443,7 +452,7 @@ impl Command {
             builder = builder.with_max_block(max_block)
         }
 
-        let factory = reth_executor::Factory::new(Arc::new(self.chain.clone()));
+        let factory = reth_executor::Factory::new(self.chain.clone());
         let pipeline = builder
             .with_sync_state_updater(updater.clone())
             .add_stages(
@@ -454,10 +463,10 @@ impl Command {
                     updater,
                     factory.clone(),
                 )
-                .set(TotalDifficultyStage {
-                    chain_spec: self.chain.clone(),
-                    commit_threshold: stage_conf.total_difficulty.commit_threshold,
-                })
+                .set(
+                    TotalDifficultyStage::new(consensus.clone())
+                        .with_commit_threshold(stage_conf.total_difficulty.commit_threshold),
+                )
                 .set(SenderRecoveryStage {
                     commit_threshold: stage_conf.sender_recovery.commit_threshold,
                 })

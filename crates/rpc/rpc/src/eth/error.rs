@@ -1,41 +1,19 @@
-//! Error variants for the `eth_` namespace.
+//! Implementation specific Errors for the `eth_` namespace.
 
 use crate::result::{internal_rpc_err, rpc_err};
 use jsonrpsee::{core::Error as RpcError, types::error::INVALID_PARAMS_CODE};
 use reth_primitives::{constants::SELECTOR_LEN, Address, U128, U256};
-use reth_rpc_types::BlockError;
-use reth_transaction_pool::error::PoolError;
-use revm::primitives::{EVMError, Halt};
+use reth_rpc_types::{error::EthRpcErrorCode, BlockError};
+use reth_transaction_pool::error::{InvalidPoolTransactionError, PoolError};
+use revm::primitives::{EVMError, Halt, OutOfGasError};
 
 /// Result alias
-pub(crate) type EthResult<T> = Result<T, EthApiError>;
-
-/// List of JSON-RPC error codes
-#[derive(Debug, Copy, PartialEq, Eq, Clone)]
-pub(crate) enum EthRpcErrorCode {
-    /// Failed to send transaction, See also <https://github.com/MetaMask/eth-rpc-errors/blob/main/src/error-constants.ts>
-    TransactionRejected,
-    /// Custom geth error code, <https://github.com/vapory-legacy/wiki/blob/master/JSON-RPC-Error-Codes-Improvement-Proposal.md>
-    ExecutionError,
-    /// <https://eips.ethereum.org/EIPS/eip-1898>
-    InvalidInput,
-}
-
-impl EthRpcErrorCode {
-    /// Returns the error code as `i32`
-    pub(crate) const fn code(&self) -> i32 {
-        match *self {
-            EthRpcErrorCode::TransactionRejected => -32003,
-            EthRpcErrorCode::ExecutionError => 3,
-            EthRpcErrorCode::InvalidInput => -32000,
-        }
-    }
-}
+pub type EthResult<T> = Result<T, EthApiError>;
 
 /// Errors that can occur when interacting with the `eth_` namespace
 #[derive(Debug, thiserror::Error)]
 #[allow(missing_docs)]
-pub(crate) enum EthApiError {
+pub enum EthApiError {
     /// When a raw transaction is empty
     #[error("Empty transaction data")]
     EmptyRawTransactionData,
@@ -44,7 +22,7 @@ pub(crate) enum EthApiError {
     #[error("Invalid transaction signature")]
     InvalidTransactionSignature,
     #[error(transparent)]
-    PoolError(GethTxPoolError),
+    PoolError(RpcPoolError),
     #[error("Unknown block number")]
     UnknownBlockNumber,
     #[error("Invalid block range")]
@@ -74,6 +52,9 @@ pub(crate) enum EthApiError {
     /// Other internal error
     #[error(transparent)]
     Internal(#[from] reth_interfaces::Error),
+    /// Error related to signing
+    #[error(transparent)]
+    Signing(#[from] SignError),
 }
 
 impl From<EthApiError> for RpcError {
@@ -87,6 +68,7 @@ impl From<EthApiError> for RpcError {
             EthApiError::ConflictingRequestGasPrice { .. } |
             EthApiError::ConflictingRequestGasPriceAndTipSet { .. } |
             EthApiError::RequestLegacyGasPriceAndTipSet { .. } |
+            EthApiError::Signing(_) |
             EthApiError::BothStateAndStateDiffInOverride(_) => {
                 rpc_err(INVALID_PARAMS_CODE, error.to_string(), None)
             }
@@ -176,13 +158,23 @@ pub enum InvalidTransactionError {
     SenderNoEOA,
     /// Thrown during estimate if caller has insufficient funds to cover the tx.
     #[error("Out of gas: gas required exceeds allowance: {0:?}")]
-    OutOfGas(U256),
+    BasicOutOfGas(U256),
+    /// As BasicOutOfGas but thrown when gas exhausts during memory expansion.
+    #[error("Out of gas: gas exhausts during memory expansion: {0:?}")]
+    MemoryOutOfGas(U256),
+    /// As BasicOutOfGas but thrown when gas exhausts during precompiled contract execution.
+    #[error("Out of gas: gas exhausts during precompiled contract execution: {0:?}")]
+    PrecompileOutOfGas(U256),
+    /// revm's Type cast error, U256 casts down to a u64 with overflow
+    #[error("Out of gas: revm's Type cast error, U256 casts down to a u64 with overflow {0:?}")]
+    InvalidOperandOutOfGas(U256),
     /// Thrown if executing a transaction failed during estimate/call
     #[error("{0}")]
     Revert(RevertError),
     /// Unspecific evm halt error
     #[error("EVM error {0:?}")]
     EvmHalt(Halt),
+    /// Invalid chain id set for the transaction.
     #[error("Invalid chain id")]
     InvalidChainId,
 }
@@ -196,6 +188,19 @@ impl InvalidTransactionError {
             InvalidTransactionError::GasTooHigh => EthRpcErrorCode::InvalidInput.code(),
             InvalidTransactionError::Revert(_) => EthRpcErrorCode::ExecutionError.code(),
             _ => EthRpcErrorCode::TransactionRejected.code(),
+        }
+    }
+
+    /// Converts the out of gas error
+    pub(crate) fn out_of_gas(reason: OutOfGasError, gas_limit: U256) -> Self {
+        match reason {
+            OutOfGasError::BasicOutOfGas => InvalidTransactionError::BasicOutOfGas(gas_limit),
+            OutOfGasError::Memory => InvalidTransactionError::MemoryOutOfGas(gas_limit),
+            OutOfGasError::Precompile => InvalidTransactionError::PrecompileOutOfGas(gas_limit),
+            OutOfGasError::InvalidOperand => {
+                InvalidTransactionError::InvalidOperandOutOfGas(gas_limit)
+            }
+            OutOfGasError::MemoryLimit => InvalidTransactionError::MemoryOutOfGas(gas_limit),
         }
     }
 }
@@ -288,9 +293,10 @@ impl std::fmt::Display for RevertError {
 
 impl std::error::Error for RevertError {}
 
-/// A helper error type that mirrors `geth` Txpool's error messages
+/// A helper error type that's mainly used to mirror `geth` Txpool's error messages
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum GethTxPoolError {
+#[allow(missing_docs)]
+pub enum RpcPoolError {
     #[error("already known")]
     AlreadyKnown,
     #[error("invalid sender")]
@@ -307,25 +313,43 @@ pub(crate) enum GethTxPoolError {
     NegativeValue,
     #[error("oversized data")]
     OversizedData,
+    #[error(transparent)]
+    Invalid(#[from] InvalidPoolTransactionError),
+    #[error(transparent)]
+    Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
-impl From<PoolError> for GethTxPoolError {
-    fn from(err: PoolError) -> GethTxPoolError {
+impl From<PoolError> for RpcPoolError {
+    fn from(err: PoolError) -> RpcPoolError {
         match err {
-            PoolError::ReplacementUnderpriced(_) => GethTxPoolError::ReplaceUnderpriced,
-            PoolError::ProtocolFeeCapTooLow(_, _) => GethTxPoolError::Underpriced,
-            PoolError::SpammerExceededCapacity(_, _) => GethTxPoolError::TxPoolOverflow,
-            PoolError::DiscardedOnInsert(_) => GethTxPoolError::TxPoolOverflow,
-            PoolError::TxExceedsGasLimit(_, _, _) => GethTxPoolError::GasLimit,
-            PoolError::TxExceedsMaxInitCodeSize(_, _, _) => GethTxPoolError::OversizedData,
+            PoolError::ReplacementUnderpriced(_) => RpcPoolError::ReplaceUnderpriced,
+            PoolError::ProtocolFeeCapTooLow(_, _) => RpcPoolError::Underpriced,
+            PoolError::SpammerExceededCapacity(_, _) => RpcPoolError::TxPoolOverflow,
+            PoolError::DiscardedOnInsert(_) => RpcPoolError::TxPoolOverflow,
+            PoolError::InvalidTransaction(_, err) => err.into(),
+            PoolError::Other(_, err) => RpcPoolError::Other(err),
         }
     }
 }
 
 impl From<PoolError> for EthApiError {
     fn from(err: PoolError) -> Self {
-        EthApiError::PoolError(GethTxPoolError::from(err))
+        EthApiError::PoolError(RpcPoolError::from(err))
     }
+}
+
+/// Errors returned from a sign request.
+#[derive(Debug, thiserror::Error)]
+pub enum SignError {
+    /// Error occured while trying to sign data.
+    #[error("Could not sign")]
+    CouldNotSign,
+    /// Signer for requested account not found.
+    #[error("Unknown account")]
+    NoAccount,
+    /// TypedData has invalid format.
+    #[error("Given typed data is not valid")]
+    TypedData,
 }
 
 /// Returns the revert reason from the `revm::TransactOut` data, if it's an abi encoded String.
