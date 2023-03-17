@@ -310,8 +310,7 @@ where
             }
         }
 
-        let oldest_block_hash =
-            self.inner.client.block_hash(start_block.try_into().unwrap()).to_rpc_result()?.unwrap();
+        let oldest_block_hash = self.inner.client.block_hash(start_block).to_rpc_result()?.unwrap();
 
         fee_history_cache_items.get_mut(&start_block).unwrap().hash = Some(oldest_block_hash);
         fee_history_cache.get_mut(&start_block).unwrap().hash = Some(oldest_block_hash);
@@ -447,8 +446,7 @@ mod tests {
             let hash = H256::random();
             let gas_limit: u64 = random();
             let gas_used: u64 = random();
-            let base_fee_per_gas: Option<u64> =
-                if random::<bool>() { Some(random()) } else { None };
+            let base_fee_per_gas: Option<u64> = random::<bool>().then(|| random());
 
             let header = Header {
                 number: newest_block - i,

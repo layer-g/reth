@@ -200,28 +200,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-stream"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad445822218ce64be7a341abfb0b1ea43b5c23aa83902542a4542e78309d8e5e"
-dependencies = [
- "async-stream-impl",
- "futures-core",
- "pin-project-lite",
-]
-
-[[package]]
-name = "async-stream-impl"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4655ae1a7b0cdf149156f780c5bf3f1352bc53cbd9e0a361a7ef7b22947e965"
-dependencies = [
- "proc-macro2 1.0.52",
- "quote 1.0.26",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -707,13 +685,13 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.1.8"
+version = "4.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3d7ae14b20b94cb02149ed21a86c423859cbe18dc7ed69845cace50e52b40a5"
+checksum = "9a9d6ada83c1edcce028902ea27dd929069c70df4c7600b131b4d9a1ad2879cc"
 dependencies = [
  "bitflags",
  "clap_derive",
- "clap_lex 0.3.2",
+ "clap_lex 0.3.3",
  "is-terminal",
  "once_cell",
  "strsim 0.10.0",
@@ -722,9 +700,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.1.8"
+version = "4.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44bec8e5c9d09e439c4335b1af0abaab56dcf3b94999a936e1bb47b9134288f0"
+checksum = "fddf67631444a3a3e3e5ac51c36a5e01335302de677bd78759eaa90ab1f46644"
 dependencies = [
  "heck",
  "proc-macro-error",
@@ -744,9 +722,9 @@ dependencies = [
 
 [[package]]
 name = "clap_lex"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "350b9cf31731f9957399229e9b2adc51eeabdfbe9d71d9a0552275fd12710d09"
+checksum = "033f6b7a4acb1f358c742aaca805c939ee73b4c6209ae4318ec7aca81c42e646"
 dependencies = [
  "os_str_bytes",
 ]
@@ -858,7 +836,7 @@ dependencies = [
  "directories",
  "serde",
  "thiserror",
- "toml",
+ "toml 0.5.11",
 ]
 
 [[package]]
@@ -1421,8 +1399,8 @@ dependencies = [
 
 [[package]]
 name = "discv5"
-version = "0.2.1"
-source = "git+https://github.com/sigp/discv5#bf94c4fc92433b3197c06b8713d579c7c18622e9"
+version = "0.2.2"
+source = "git+https://github.com/sigp/discv5#d86707d79c1183b14b8cf31ef62a8a74ef9cd3e4"
 dependencies = [
  "aes 0.7.5",
  "aes-gcm",
@@ -1782,7 +1760,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract"
 version = "2.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#304fe0988d23302694a63da47ce683af19305357"
+source = "git+https://github.com/gakonst/ethers-rs#18d40425ec00c4f3b79ef293c59bdf165ef39cca"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-contract-derive",
@@ -1800,10 +1778,9 @@ dependencies = [
 [[package]]
 name = "ethers-contract-abigen"
 version = "2.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#304fe0988d23302694a63da47ce683af19305357"
+source = "git+https://github.com/gakonst/ethers-rs#18d40425ec00c4f3b79ef293c59bdf165ef39cca"
 dependencies = [
  "Inflector",
- "cfg-if",
  "dunce",
  "ethers-core",
  "ethers-etherscan",
@@ -1819,7 +1796,7 @@ dependencies = [
  "serde_json",
  "syn 1.0.109",
  "tokio",
- "toml",
+ "toml 0.7.3",
  "url",
  "walkdir",
 ]
@@ -1827,7 +1804,7 @@ dependencies = [
 [[package]]
 name = "ethers-contract-derive"
 version = "2.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#304fe0988d23302694a63da47ce683af19305357"
+source = "git+https://github.com/gakonst/ethers-rs#18d40425ec00c4f3b79ef293c59bdf165ef39cca"
 dependencies = [
  "ethers-contract-abigen",
  "ethers-core",
@@ -1840,7 +1817,7 @@ dependencies = [
 [[package]]
 name = "ethers-core"
 version = "2.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#304fe0988d23302694a63da47ce683af19305357"
+source = "git+https://github.com/gakonst/ethers-rs#18d40425ec00c4f3b79ef293c59bdf165ef39cca"
 dependencies = [
  "arrayvec",
  "bytes",
@@ -1859,7 +1836,6 @@ dependencies = [
  "proc-macro2 1.0.52",
  "rand 0.8.5",
  "rlp",
- "rlp-derive",
  "serde",
  "serde_json",
  "strum",
@@ -1873,14 +1849,13 @@ dependencies = [
 [[package]]
 name = "ethers-etherscan"
 version = "2.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#304fe0988d23302694a63da47ce683af19305357"
+source = "git+https://github.com/gakonst/ethers-rs#18d40425ec00c4f3b79ef293c59bdf165ef39cca"
 dependencies = [
  "ethers-core",
  "getrandom 0.2.8",
  "reqwest",
  "semver 1.0.17",
  "serde",
- "serde-aux",
  "serde_json",
  "thiserror",
  "tracing",
@@ -1889,7 +1864,7 @@ dependencies = [
 [[package]]
 name = "ethers-middleware"
 version = "2.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#304fe0988d23302694a63da47ce683af19305357"
+source = "git+https://github.com/gakonst/ethers-rs#18d40425ec00c4f3b79ef293c59bdf165ef39cca"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -1914,11 +1889,12 @@ dependencies = [
 [[package]]
 name = "ethers-providers"
 version = "2.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#304fe0988d23302694a63da47ce683af19305357"
+source = "git+https://github.com/gakonst/ethers-rs#18d40425ec00c4f3b79ef293c59bdf165ef39cca"
 dependencies = [
  "async-trait",
  "auto_impl",
  "base64 0.21.0",
+ "bytes",
  "enr 0.8.0",
  "ethers-core",
  "futures-channel",
@@ -1929,8 +1905,8 @@ dependencies = [
  "hashers",
  "hex",
  "http",
+ "instant",
  "once_cell",
- "parking_lot 0.11.2",
  "pin-project",
  "reqwest",
  "serde",
@@ -1943,7 +1919,6 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-timer",
  "web-sys",
  "ws_stream_wasm",
 ]
@@ -1951,7 +1926,7 @@ dependencies = [
 [[package]]
 name = "ethers-signers"
 version = "2.0.0"
-source = "git+https://github.com/gakonst/ethers-rs#304fe0988d23302694a63da47ce683af19305357"
+source = "git+https://github.com/gakonst/ethers-rs#18d40425ec00c4f3b79ef293c59bdf165ef39cca"
 dependencies = [
  "async-trait",
  "coins-bip32",
@@ -2839,17 +2814,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
 dependencies = [
  "cfg-if",
- "js-sys",
- "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
 name = "io-lifetimes"
-version = "1.0.6"
+version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfa919a82ea574332e2de6e74b4c36e74d41982b335080fa59d4ef31be20fdf3"
+checksum = "76e86b86ae312accbf05ade23ce76b625e0e47a255712b7414037385a1c05380"
 dependencies = [
+ "hermit-abi 0.3.1",
  "libc",
  "windows-sys 0.45.0",
 ]
@@ -4427,7 +4400,6 @@ dependencies = [
  "http",
  "http-body",
  "hyper",
- "hyper-rustls",
  "ipnet",
  "js-sys",
  "log",
@@ -4435,19 +4407,15 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
- "rustls",
- "rustls-pemfile",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "tokio",
- "tokio-rustls",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots",
  "winreg",
 ]
 
@@ -4466,7 +4434,7 @@ name = "reth"
 version = "0.1.0"
 dependencies = [
  "backon",
- "clap 4.1.8",
+ "clap 4.1.9",
  "comfy-table",
  "confy",
  "crossterm",
@@ -4479,7 +4447,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "metrics-util",
  "proptest",
- "reth-consensus",
+ "reth-beacon-consensus",
  "reth-db",
  "reth-discv4",
  "reth-downloaders",
@@ -4509,6 +4477,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "reth-beacon-consensus"
+version = "0.1.0"
+dependencies = [
+ "reth-consensus-common",
+ "reth-interfaces",
+ "reth-primitives",
+ "tokio",
+]
+
+[[package]]
 name = "reth-codecs"
 version = "0.1.0"
 dependencies = [
@@ -4524,7 +4502,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-consensus"
+name = "reth-consensus-common"
 version = "0.1.0"
 dependencies = [
  "assert_matches",
@@ -4532,7 +4510,6 @@ dependencies = [
  "reth-interfaces",
  "reth-primitives",
  "reth-provider",
- "tokio",
 ]
 
 [[package]]
@@ -4977,6 +4954,7 @@ dependencies = [
  "reth-tracing",
  "revm-primitives",
  "thiserror",
+ "tracing",
  "triehash",
 ]
 
@@ -5019,7 +4997,6 @@ dependencies = [
  "auto_impl",
  "bytes",
  "criterion",
- "enr 0.8.0",
  "ethereum-types",
  "ethnum",
  "hex-literal",
@@ -5171,15 +5148,11 @@ dependencies = [
  "reth-db",
  "reth-discv4",
  "reth-downloaders",
- "reth-interfaces",
  "reth-net-nat",
  "reth-network",
  "reth-network-api",
  "reth-primitives",
  "reth-provider",
- "reth-staged-sync",
- "reth-stages",
- "reth-tasks",
  "reth-tracing",
  "secp256k1",
  "serde",
@@ -5188,8 +5161,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
- "tokio-stream",
- "tokio-test",
  "tracing",
  "walkdir",
 ]
@@ -5277,7 +5248,7 @@ dependencies = [
 [[package]]
 name = "revm"
 version = "3.0.0"
-source = "git+https://github.com/layer-g/revm?branch=tan-merge#817b0d21c6df67b89e7b46b1eefc613382bea605"
+source = "git+https://github.com/layer-g/revm?branch=tan-merge#2ec2afb93961f75fc98ce9db327f8059068a184e"
 dependencies = [
  "auto_impl",
  "revm-interpreter",
@@ -5287,7 +5258,7 @@ dependencies = [
 [[package]]
 name = "revm-interpreter"
 version = "1.0.0"
-source = "git+https://github.com/layer-g/revm?branch=tan-merge#817b0d21c6df67b89e7b46b1eefc613382bea605"
+source = "git+https://github.com/layer-g/revm?branch=tan-merge#2ec2afb93961f75fc98ce9db327f8059068a184e"
 dependencies = [
  "derive_more",
  "enumn",
@@ -5298,7 +5269,7 @@ dependencies = [
 [[package]]
 name = "revm-precompile"
 version = "2.0.0"
-source = "git+https://github.com/layer-g/revm?branch=tan-merge#817b0d21c6df67b89e7b46b1eefc613382bea605"
+source = "git+https://github.com/layer-g/revm?branch=tan-merge#2ec2afb93961f75fc98ce9db327f8059068a184e"
 dependencies = [
  "k256 0.11.6",
  "num",
@@ -5314,7 +5285,7 @@ dependencies = [
 [[package]]
 name = "revm-primitives"
 version = "1.0.0"
-source = "git+https://github.com/layer-g/revm?branch=tan-merge#817b0d21c6df67b89e7b46b1eefc613382bea605"
+source = "git+https://github.com/layer-g/revm?branch=tan-merge#2ec2afb93961f75fc98ce9db327f8059068a184e"
 dependencies = [
  "arbitrary",
  "auto_impl",
@@ -5396,6 +5367,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
 dependencies = [
  "bytes",
+ "rlp-derive",
  "rustc-hex",
 ]
 
@@ -5666,9 +5638,9 @@ dependencies = [
 
 [[package]]
 name = "secp256k1-sys"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "642a62736682fdd8c71da0eb273e453c8ac74e33b9fb310e22ba5b03ec7651ff"
+checksum = "70a129b9e9efbfb223753b9163c4ab3b13cff7fd9c7f010fbac25ab4099fa07e"
 dependencies = [
  "cc",
 ]
@@ -5745,16 +5717,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-aux"
-version = "4.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c599b3fd89a75e0c18d6d2be693ddb12cccaf771db4ff9e39097104808a014c0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "serde_derive"
 version = "1.0.156"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5773,6 +5735,15 @@ checksum = "1c533a59c9d8a93a09c6ab31f0fd5e5f4dd1b8fc9434804029839884765d04ea"
 dependencies = [
  "itoa",
  "ryu",
+ "serde",
+]
+
+[[package]]
+name = "serde_spanned"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0efd8caf556a6cebd3b285caf480045fcc1ac04f6bd786b09a6f11af30c4fcf4"
+dependencies = [
  "serde",
 ]
 
@@ -6483,19 +6454,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-test"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53474327ae5e166530d17f2d956afcb4f8a004de581b3cae10f12006bc8163e3"
-dependencies = [
- "async-stream",
- "bytes",
- "futures-core",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
 name = "tokio-tungstenite"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6548,10 +6506,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b403acf6f2bb0859c93c7f0d967cb4a75a7ac552100f9322faf64dc047669b21"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ab8ed2edee10b50132aed5f331333428b011c99402b5a534154ed15746f9622"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "toml_edit"
@@ -6560,6 +6533,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc18466501acd8ac6a3f615dd29a3438f8ca6bb3b19537138b3106e575621274"
 dependencies = [
  "indexmap",
+ "serde",
+ "serde_spanned",
  "toml_datetime",
  "winnow",
 ]
@@ -6954,9 +6929,9 @@ dependencies = [
 
 [[package]]
 name = "unicode-bidi"
-version = "0.3.11"
+version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "524b68aca1d05e03fdf03fcdce2c6c94b6daf6d16861ddaa7e4f2b6638a9052c"
+checksum = "7d502c968c6a838ead8e69b2ee18ec708802f99db92a0d156705ec9ef801993b"
 
 [[package]]
 name = "unicode-ident"
@@ -7184,21 +7159,6 @@ name = "wasm-bindgen-shared"
 version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0046fef7e28c3804e5e38bfa31ea2a0f73905319b677e57ebe37e49358989b5d"
-
-[[package]]
-name = "wasm-timer"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be0ecb0db480561e9a7642b5d3e4187c128914e58aa84330b9493e3eb68c5e7f"
-dependencies = [
- "futures",
- "js-sys",
- "parking_lot 0.11.2",
- "pin-utils",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
 
 [[package]]
 name = "web-sys"
