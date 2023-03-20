@@ -4,9 +4,9 @@
 use crate::{
     args::NetworkArgs,
     dirs::{ConfigPath, DbPath, PlatformPath},
-    prometheus_exporter,
+    prometheus_exporter, StageEnum,
 };
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use reth_beacon_consensus::BeaconConsensus;
 use reth_downloaders::bodies::bodies::BodiesDownloaderBuilder;
 use reth_primitives::ChainSpec;
@@ -86,14 +86,6 @@ pub struct Command {
     network: NetworkArgs,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, ValueEnum)]
-enum StageEnum {
-    Headers,
-    Bodies,
-    Senders,
-    Execution,
-}
-
 impl Command {
     /// Execute `stage` command
     pub async fn execute(&self) -> eyre::Result<()> {
@@ -123,7 +115,7 @@ impl Command {
 
         match self.stage {
             StageEnum::Bodies => {
-                let (consensus, _) = BeaconConsensus::builder().build(self.chain.clone());
+                let consensus = Arc::new(BeaconConsensus::new(self.chain.clone()));
 
                 let mut config = config;
                 config.peers.connect_trusted_nodes_only = self.network.trusted_only;
