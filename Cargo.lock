@@ -4458,6 +4458,7 @@ dependencies = [
  "reth-network-api",
  "reth-primitives",
  "reth-provider",
+ "reth-revm-inspectors",
  "reth-rlp",
  "reth-rpc",
  "reth-rpc-builder",
@@ -4483,7 +4484,6 @@ dependencies = [
  "reth-consensus-common",
  "reth-interfaces",
  "reth-primitives",
- "tokio",
 ]
 
 [[package]]
@@ -5001,12 +5001,9 @@ dependencies = [
  "ethnum",
  "hex-literal",
  "pprof",
- "rand 0.8.5",
  "reth-rlp",
  "reth-rlp-derive",
  "revm-primitives",
- "rlp",
- "secp256k1",
  "smol_str",
 ]
 
@@ -5116,7 +5113,6 @@ dependencies = [
 name = "reth-rpc-types"
 version = "0.1.0"
 dependencies = [
- "ethers-core",
  "jsonrpsee-types",
  "lru 0.9.0",
  "rand 0.8.5",
