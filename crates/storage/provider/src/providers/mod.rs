@@ -11,7 +11,7 @@ use reth_db::{
 use reth_interfaces::Result;
 use reth_primitives::{
     Block, BlockHash, BlockId, BlockNumber, ChainInfo, ChainSpec, Hardfork, Head, Header, Receipt,
-    TransactionSigned, TxHash, TxNumber, Withdrawal, H256, U256,
+    TransactionMeta, TransactionSigned, TxHash, TxNumber, Withdrawal, H256, U256,
 };
 use reth_revm_primitives::{
     config::revm_spec,
@@ -181,6 +181,59 @@ impl<DB: Database> TransactionsProvider for ShareableDatabase<DB> {
             .map_err(Into::into)
     }
 
+    fn transaction_by_hash_with_meta(
+        &self,
+        tx_hash: TxHash,
+    ) -> Result<Option<(TransactionSigned, TransactionMeta)>> {
+        self.db
+            .view(|tx| -> Result<_> {
+                if let Some(transaction_id) = tx.get::<tables::TxHashNumber>(tx_hash)? {
+                    if let Some(transaction) = tx.get::<tables::Transactions>(transaction_id)? {
+                        let mut transaction_cursor =
+                            tx.cursor_read::<tables::TransactionBlock>()?;
+                        if let Some(block_number) =
+                            transaction_cursor.seek(transaction_id).map(|b| b.map(|(_, bn)| bn))?
+                        {
+                            if let Some(block_hash) =
+                                tx.get::<tables::CanonicalHeaders>(block_number)?
+                            {
+                                if let Some(block_body) =
+                                    tx.get::<tables::BlockBodies>(block_number)?
+                                {
+                                    // the index of the tx in the block is the offset:
+                                    // len([start..tx_id])
+                                    // SAFETY: `transaction_id` is always `>=` the block's first
+                                    // index
+                                    let index = transaction_id - block_body.first_tx_index();
+
+                                    let meta = TransactionMeta {
+                                        tx_hash,
+                                        index,
+                                        block_hash,
+                                        block_number,
+                                    };
+
+                                    return Ok(Some((transaction, meta)))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(None)
+            })?
+            .map_err(Into::into)
+    }
+
+    fn transaction_block(&self, id: TxNumber) -> Result<Option<BlockNumber>> {
+        self.db
+            .view(|tx| {
+                let mut cursor = tx.cursor_read::<tables::TransactionBlock>()?;
+                cursor.seek(id).map(|b| b.map(|(_, bn)| bn))
+            })?
+            .map_err(Into::into)
+    }
+
     fn transactions_by_block(&self, id: BlockId) -> Result<Option<Vec<TransactionSigned>>> {
         if let Some(number) = self.block_number_for_id(id)? {
             let tx = self.db.tx()?;
@@ -269,10 +322,14 @@ impl<DB: Database> WithdrawalsProvider for ShareableDatabase<DB> {
     fn withdrawals_by_block(&self, id: BlockId, timestamp: u64) -> Result<Option<Vec<Withdrawal>>> {
         if self.chain_spec.fork(Hardfork::Shanghai).active_at_timestamp(timestamp) {
             if let Some(number) = self.block_number_for_id(id)? {
-                return Ok(self
-                    .db
-                    .view(|tx| tx.get::<tables::BlockWithdrawals>(number))??
-                    .map(|w| w.withdrawals))
+                // If we are past shanghai, then all blocks should have a withdrawal list, even if
+                // empty
+                return Ok(Some(
+                    self.db
+                        .view(|tx| tx.get::<tables::BlockWithdrawals>(number))??
+                        .map(|w| w.withdrawals)
+                        .unwrap_or_default(),
+                ))
             }
         }
         Ok(None)
