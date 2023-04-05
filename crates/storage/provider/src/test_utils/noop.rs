@@ -1,6 +1,7 @@
 use crate::{
     traits::ReceiptProvider, AccountProvider, BlockHashProvider, BlockIdProvider, BlockProvider,
-    EvmEnvProvider, HeaderProvider, StateProvider, StateProviderFactory, TransactionsProvider,
+    EvmEnvProvider, HeaderProvider, StateProvider, StateProviderBox, StateProviderFactory,
+    TransactionsProvider,
 };
 use reth_interfaces::Result;
 use reth_primitives::{
@@ -48,6 +49,10 @@ impl BlockProvider for NoopProvider {
 }
 
 impl TransactionsProvider for NoopProvider {
+    fn transaction_id(&self, _tx_hash: TxHash) -> Result<Option<TxNumber>> {
+        Ok(None)
+    }
+
     fn transaction_by_id(&self, _id: TxNumber) -> Result<Option<TransactionSigned>> {
         Ok(None)
     }
@@ -180,18 +185,22 @@ impl EvmEnvProvider for NoopProvider {
 }
 
 impl StateProviderFactory for NoopProvider {
-    type HistorySP<'a> = NoopProvider where Self: 'a;
-    type LatestSP<'a> = NoopProvider where Self: 'a;
-
-    fn latest(&self) -> Result<Self::LatestSP<'_>> {
-        Ok(*self)
+    fn latest(&self) -> Result<StateProviderBox<'_>> {
+        Ok(Box::new(*self))
     }
 
-    fn history_by_block_number(&self, _block: BlockNumber) -> Result<Self::HistorySP<'_>> {
-        Ok(*self)
+    fn history_by_block_number(&self, _block: BlockNumber) -> Result<StateProviderBox<'_>> {
+        Ok(Box::new(*self))
     }
 
-    fn history_by_block_hash(&self, _block: BlockHash) -> Result<Self::HistorySP<'_>> {
-        Ok(*self)
+    fn history_by_block_hash(&self, _block: BlockHash) -> Result<StateProviderBox<'_>> {
+        Ok(Box::new(*self))
+    }
+
+    fn pending<'a>(
+        &'a self,
+        _post_state_data: Box<dyn crate::PostStateDataProvider + 'a>,
+    ) -> Result<StateProviderBox<'a>> {
+        Ok(Box::new(*self))
     }
 }

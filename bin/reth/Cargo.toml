@@ -12,12 +12,14 @@ reth-primitives = { path = "../../crates/primitives", features = ["arbitrary"] }
 reth-db = { path = "../../crates/storage/db", features = ["mdbx", "test-utils"] }
 # TODO: Temporary use of the test-utils feature
 reth-provider = { path = "../../crates/storage/provider", features = ["test-utils"] }
+reth-revm = { path = "../../crates/revm" }
 reth-revm-inspectors = { path = "../../crates/revm/revm-inspectors" }
 reth-staged-sync = { path = "../../crates/staged-sync" }
 reth-stages = { path = "../../crates/stages"}
 reth-interfaces = { path = "../../crates/interfaces", features = ["test-utils"] }
 reth-transaction-pool = { path = "../../crates/transaction-pool" }
 reth-beacon-consensus = { path = "../../crates/consensus/beacon" }
+reth-auto-seal-consensus = { path = "../../crates/consensus/auto-seal" }
 reth-executor = { path = "../../crates/executor" }
 reth-rpc-engine-api = { path = "../../crates/rpc/rpc-engine-api" }
 reth-rpc-builder = { path = "../../crates/rpc/rpc-builder" }
