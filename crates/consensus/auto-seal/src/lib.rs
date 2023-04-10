@@ -20,6 +20,7 @@ use reth_primitives::{
     BlockBody, BlockHash, BlockHashOrNumber, BlockNumber, ChainSpec, Header, SealedBlock,
     SealedHeader, H256, U256,
 };
+use reth_provider::CanonStateNotificationSender;
 use reth_transaction_pool::TransactionPool;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc::UnboundedSender, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -31,7 +32,6 @@ mod task;
 
 pub use crate::client::AutoSealClient;
 pub use mode::{FixedBlockTimeMiner, MiningMode, ReadyTransactionMiner};
-use reth_interfaces::events::NewBlockNotificationSink;
 pub use task::MiningTask;
 
 /// A consensus implementation intended for local development and testing purposes.
@@ -83,7 +83,7 @@ pub struct AutoSealBuilder<Client, Pool> {
     mode: MiningMode,
     storage: Storage,
     to_engine: UnboundedSender<BeaconEngineMessage>,
-    new_block_notification_sender: NewBlockNotificationSink,
+    canon_state_notification: CanonStateNotificationSender,
 }
 
 // === impl AutoSealBuilder ===
@@ -95,7 +95,7 @@ impl<Client, Pool: TransactionPool> AutoSealBuilder<Client, Pool> {
         client: Client,
         pool: Pool,
         to_engine: UnboundedSender<BeaconEngineMessage>,
-        new_block_notification_sender: NewBlockNotificationSink,
+        canon_state_notification: CanonStateNotificationSender,
     ) -> Self {
         let mode = MiningMode::interval(std::time::Duration::from_secs(1));
         Self {
@@ -105,7 +105,7 @@ impl<Client, Pool: TransactionPool> AutoSealBuilder<Client, Pool> {
             pool,
             mode,
             to_engine,
-            new_block_notification_sender,
+            canon_state_notification,
         }
     }
 
@@ -117,21 +117,14 @@ impl<Client, Pool: TransactionPool> AutoSealBuilder<Client, Pool> {
 
     /// Consumes the type and returns all components
     pub fn build(self) -> (AutoSealConsensus, AutoSealClient, MiningTask<Client, Pool>) {
-        let Self {
-            client,
-            consensus,
-            pool,
-            mode,
-            storage,
-            to_engine,
-            new_block_notification_sender,
-        } = self;
+        let Self { client, consensus, pool, mode, storage, to_engine, canon_state_notification } =
+            self;
         let auto_client = AutoSealClient::new(storage.clone());
         let task = MiningTask::new(
             Arc::clone(&consensus.chain_spec),
             mode,
             to_engine,
-            new_block_notification_sender,
+            canon_state_notification,
             storage,
             client,
             pool,
@@ -152,7 +145,11 @@ impl Storage {
     fn new(chain_spec: &ChainSpec) -> Self {
         let header = chain_spec.genesis_header();
         let best_hash = header.hash_slow();
-        Self { inner: Arc::new(RwLock::new(StorageInner { best_hash, ..Default::default() })) }
+        let mut storage =
+            StorageInner { best_hash, total_difficulty: header.difficulty, ..Default::default() };
+        storage.headers.insert(0, header);
+        storage.bodies.insert(best_hash, BlockBody::default());
+        Self { inner: Arc::new(RwLock::new(storage)) }
     }
 
     /// Returns the write lock of the storage
@@ -178,6 +175,8 @@ pub(crate) struct StorageInner {
     pub(crate) best_block: u64,
     /// Tracks hash of best block
     pub(crate) best_hash: H256,
+    /// The total difficulty of the chain until this block
+    pub(crate) total_difficulty: U256,
 }
 
 // === impl StorageInner ===
@@ -207,6 +206,7 @@ impl StorageInner {
 
         self.best_hash = header.hash_slow();
         self.best_block = header.number;
+        self.total_difficulty += header.difficulty;
 
         trace!(target: "consensus::auto", num=self.best_block, hash=?self.best_hash, "inserting new block");
         self.headers.insert(header.number, header);

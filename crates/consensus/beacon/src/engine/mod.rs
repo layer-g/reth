@@ -7,9 +7,11 @@ use reth_interfaces::{
     sync::SyncStateUpdater,
     Error,
 };
-use reth_primitives::{BlockHash, BlockNumber, SealedBlock, H256};
+use reth_miner::PayloadStore;
+use reth_primitives::{BlockHash, BlockNumber, Header, SealedBlock, H256};
 use reth_rpc_types::engine::{
-    ExecutionPayload, ForkchoiceUpdated, PayloadAttributes, PayloadStatus, PayloadStatusEnum,
+    EngineRpcError, ExecutionPayload, ExecutionPayloadEnvelope, ForkchoiceUpdated,
+    PayloadAttributes, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
 use reth_stages::{stages::FINISH, Pipeline};
 use reth_tasks::TaskSpawner;
@@ -48,12 +50,13 @@ pub use pipeline_state::PipelineState;
 ///
 /// If the future is polled more than once. Leads to undefined state.
 #[must_use = "Future does nothing unless polled"]
-pub struct BeaconConsensusEngine<DB, TS, U, BT>
+pub struct BeaconConsensusEngine<DB, TS, U, BT, P>
 where
     DB: Database,
     TS: TaskSpawner,
     U: SyncStateUpdater,
     BT: BlockchainTreeEngine,
+    P: PayloadStore,
 {
     /// The database handle.
     db: Arc<DB>,
@@ -75,14 +78,17 @@ where
     /// Max block after which the consensus engine would terminate the sync. Used for debugging
     /// purposes.
     max_block: Option<BlockNumber>,
+    /// The payload store.
+    payload_store: P,
 }
 
-impl<DB, TS, U, BT> BeaconConsensusEngine<DB, TS, U, BT>
+impl<DB, TS, U, BT, P> BeaconConsensusEngine<DB, TS, U, BT, P>
 where
     DB: Database + Unpin + 'static,
     TS: TaskSpawner,
     U: SyncStateUpdater + 'static,
     BT: BlockchainTreeEngine + 'static,
+    P: PayloadStore + 'static,
 {
     /// Create new instance of the [BeaconConsensusEngine].
     ///
@@ -95,6 +101,7 @@ where
         blockchain_tree: BT,
         message_rx: UnboundedReceiver<BeaconEngineMessage>,
         max_block: Option<BlockNumber>,
+        payload_store: P,
     ) -> Self {
         Self {
             db,
@@ -105,6 +112,7 @@ where
             forkchoice_state: None,
             next_action: BeaconEngineAction::None,
             max_block,
+            payload_store,
         }
     }
 
@@ -127,8 +135,8 @@ where
     fn on_forkchoice_updated(
         &mut self,
         state: ForkchoiceState,
-        _attrs: Option<PayloadAttributes>,
-    ) -> Result<ForkchoiceUpdated, reth_interfaces::Error> {
+        attrs: Option<PayloadAttributes>,
+    ) -> Result<ForkchoiceUpdated, BeaconEngineError> {
         trace!(target: "consensus::engine", ?state, "Received new forkchoice state");
         if state.head_block_hash.is_zero() {
             return Ok(ForkchoiceUpdated::new(PayloadStatus::from_status(
@@ -137,6 +145,9 @@ where
                 },
             )))
         }
+
+        // TODO: check PoW / EIP-3675 terminal block conditions for the fork choice head
+        // TODO: ensure validity of the payload (is this satisfied already?)
 
         let is_first_forkchoice = self.forkchoice_state.is_none();
         self.forkchoice_state = Some(state);
@@ -153,7 +164,20 @@ where
                     if pipeline_min_progress < head_block_number {
                         self.require_pipeline_run(PipelineTarget::Head);
                     }
-                    PayloadStatus::from_status(PayloadStatusEnum::Valid)
+
+                    // get header for further validation
+                    let header = self
+                        .db
+                        .view(|tx| tx.get::<tables::Headers>(head_block_number))??
+                        .expect("was canonicalized, so it exists");
+
+                    if let Some(attrs) = attrs {
+                        return self.process_payload_attributes(attrs, header, state)
+                    }
+
+                    // TODO: most recent valid block in the branch defined by payload and its
+                    // ancestors, not necessarily the head <https://github.com/paradigmxyz/reth/issues/2126>
+                    PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash))
                 }
                 Err(error) => {
                     warn!(target: "consensus::engine", ?state, ?error, "Error canonicalizing the head hash");
@@ -183,6 +207,69 @@ where
 
         trace!(target: "consensus::engine", ?state, ?status, "Returning forkchoice status");
         Ok(ForkchoiceUpdated::new(status))
+    }
+
+    /// Validates the payload attributes with respect to the header and fork choice state.
+    fn process_payload_attributes(
+        &self,
+        attrs: PayloadAttributes,
+        header: Header,
+        state: ForkchoiceState,
+    ) -> Result<ForkchoiceUpdated, BeaconEngineError> {
+        // 7. Client software MUST ensure that payloadAttributes.timestamp is
+        //    greater than timestamp of a block referenced by
+        //    forkchoiceState.headBlockHash. If this condition isn't held client
+        //    software MUST respond with -38003: `Invalid payload attributes` and
+        //    MUST NOT begin a payload build process. In such an event, the
+        //    forkchoiceState update MUST NOT be rolled back.
+        if attrs.timestamp <= header.timestamp.into() {
+            return Ok(ForkchoiceUpdated::new(PayloadStatus::from_status(
+                PayloadStatusEnum::Invalid {
+                    validation_error: EngineRpcError::InvalidPayloadAttributes.to_string(),
+                },
+            )))
+        }
+
+        // 8. Client software MUST begin a payload build process building on top of
+        //    forkchoiceState.headBlockHash and identified via buildProcessId value
+        //    if payloadAttributes is not null and the forkchoice state has been
+        //    updated successfully. The build process is specified in the Payload
+        //    building section.
+        let payload_id = self.payload_store.new_payload(header.parent_hash, attrs)?;
+
+        // Client software MUST respond to this method call in the following way:
+        // {
+        //      payloadStatus: {
+        //          status: VALID,
+        //          latestValidHash: forkchoiceState.headBlockHash,
+        //          validationError: null
+        //      },
+        //      payloadId: buildProcessId
+        // }
+        //
+        // if the payload is deemed VALID and the build process has begun.
+        Ok(ForkchoiceUpdated::new(PayloadStatus::new(
+            PayloadStatusEnum::Valid,
+            Some(state.head_block_hash),
+        ))
+        .with_payload_id(payload_id))
+    }
+
+    /// Called to receive the execution payload associated with a payload build process.
+    pub fn on_get_payload(
+        &self,
+        payload_id: PayloadId,
+    ) -> Result<ExecutionPayloadEnvelope, BeaconEngineError> {
+        // TODO: Client software SHOULD stop the updating process when either a call to
+        // engine_getPayload with the build process's payloadId is made or SECONDS_PER_SLOT (12s in
+        // the Mainnet configuration) have passed since the point in time identified by the
+        // timestamp parameter.
+
+        // for now just return the output from the payload store
+        match self.payload_store.get_execution_payload(payload_id) {
+            Some(payload) => Ok(payload),
+            None => Err(EngineRpcError::UnknownPayload.into()),
+        }
     }
 
     /// When the Consensus layer receives a new block via the consensus gossip protocol,
@@ -320,12 +407,13 @@ where
 /// local forkchoice state, it will launch the pipeline to sync to the head hash.
 /// While the pipeline is syncing, the consensus engine will keep processing messages from the
 /// receiver and forwarding them to the blockchain tree.
-impl<DB, TS, U, BT> Future for BeaconConsensusEngine<DB, TS, U, BT>
+impl<DB, TS, U, BT, P> Future for BeaconConsensusEngine<DB, TS, U, BT, P>
 where
     DB: Database + Unpin + 'static,
     TS: TaskSpawner + Unpin,
     U: SyncStateUpdater + Unpin + 'static,
     BT: BlockchainTreeEngine + Unpin + 'static,
+    P: PayloadStore + Unpin + 'static,
 {
     type Output = Result<(), BeaconEngineError>;
 
@@ -342,7 +430,7 @@ where
                             Ok(response) => response,
                             Err(error) => {
                                 error!(target: "consensus::engine", ?state, ?error, "Error getting forkchoice updated response");
-                                return Poll::Ready(Err(error.into()))
+                                return Poll::Ready(Err(error))
                             }
                         };
                         let is_valid_response =
@@ -367,6 +455,23 @@ where
                             }
                         };
                         let _ = tx.send(Ok(response));
+                    }
+                    BeaconEngineMessage::GetPayload { payload_id, tx } => {
+                        match this.on_get_payload(payload_id) {
+                            Ok(response) => {
+                                // good response, send it back
+                                let _ = tx.send(Ok(response));
+                            }
+                            Err(BeaconEngineError::EngineApi(error)) => {
+                                // specific error that we should report back to the client
+                                error!(target: "consensus::engine", ?error, "Sending engine api error response");
+                                let _ = tx.send(Err(BeaconEngineError::EngineApi(error)));
+                            }
+                            Err(error) => {
+                                error!(target: "consensus::engine", ?error, "Error getting get payload response");
+                                return Poll::Ready(Err(error))
+                            }
+                        };
                     }
                 }
             }
@@ -470,9 +575,8 @@ mod tests {
         post_state::PostState,
         test_utils::TestExecutorFactory,
     };
-    use reth_interfaces::{
-        events::NewBlockNotificationSink, sync::NoopSyncStateUpdate, test_utils::TestConsensus,
-    };
+    use reth_interfaces::{sync::NoopSyncStateUpdate, test_utils::TestConsensus};
+    use reth_miner::TestPayloadStore;
     use reth_primitives::{ChainSpec, ChainSpecBuilder, SealedBlockWithSenders, H256, MAINNET};
     use reth_provider::Transaction;
     use reth_stages::{test_utils::TestStages, ExecOutput, PipelineError, StageError};
@@ -489,6 +593,7 @@ mod tests {
         TokioTaskExecutor,
         NoopSyncStateUpdate,
         ShareableBlockchainTree<Arc<Env<WriteMap>>, TestConsensus, TestExecutorFactory>,
+        TestPayloadStore,
     >;
 
     struct TestEnv<DB> {
@@ -539,6 +644,7 @@ mod tests {
         reth_tracing::init_test_tracing();
         let db = create_test_rw_db();
         let consensus = TestConsensus::default();
+        let payload_store = TestPayloadStore::default();
         let executor_factory = TestExecutorFactory::new(chain_spec.clone());
         executor_factory.extend(executor_results);
 
@@ -552,8 +658,9 @@ mod tests {
         // Setup blockchain tree
         let externals = TreeExternals::new(db.clone(), consensus, executor_factory, chain_spec);
         let config = BlockchainTreeConfig::new(1, 2, 3);
+        let (canon_state_notification_sender, _) = tokio::sync::broadcast::channel(3);
         let tree = ShareableBlockchainTree::new(
-            BlockchainTree::new(externals, NewBlockNotificationSink::new(2), config)
+            BlockchainTree::new(externals, canon_state_notification_sender, config)
                 .expect("failed to create tree"),
         );
 
@@ -566,6 +673,7 @@ mod tests {
                 tree,
                 sync_rx,
                 None,
+                payload_store,
             ),
             TestEnv::new(db, tip_rx, sync_tx),
         )
@@ -607,7 +715,7 @@ mod tests {
             .await;
         assert_matches!(
             rx.await,
-            Ok(Err(BeaconEngineError::Pipeline(PipelineError::Stage(StageError::ChannelClosed))))
+            Ok(Err(BeaconEngineError::Pipeline(n))) if matches!(*n.as_ref(),PipelineError::Stage(StageError::ChannelClosed))
         );
     }
 
@@ -645,7 +753,7 @@ mod tests {
             .await;
         assert_matches!(
             rx.await,
-            Ok(Err(BeaconEngineError::Pipeline(PipelineError::Stage(StageError::ChannelClosed))))
+            Ok(Err(BeaconEngineError::Pipeline(n))) if matches!(*n.as_ref(),PipelineError::Stage(StageError::ChannelClosed))
         );
     }
 
@@ -680,7 +788,7 @@ mod tests {
 
         assert_matches!(
             rx.await,
-            Ok(Err(BeaconEngineError::Pipeline(PipelineError::Stage(StageError::ChannelClosed))))
+            Ok(Err(BeaconEngineError::Pipeline(n)))  if matches!(*n.as_ref(),PipelineError::Stage(StageError::ChannelClosed))
         );
     }
 
@@ -785,7 +893,10 @@ mod tests {
             assert_matches!(rx_invalid.await, Ok(Ok(result)) => assert_eq!(result, expected_result));
 
             let rx_valid = env.send_forkchoice_updated(forkchoice);
-            let expected_result = ForkchoiceUpdated::from_status(PayloadStatusEnum::Valid);
+            let expected_result = ForkchoiceUpdated::new(PayloadStatus::new(
+                PayloadStatusEnum::Valid,
+                Some(block1.hash),
+            ));
             assert_matches!(rx_valid.await, Ok(Ok(result)) => assert_eq!(result, expected_result));
 
             assert_matches!(engine_rx.try_recv(), Err(TryRecvError::Empty));
