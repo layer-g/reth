@@ -11,7 +11,8 @@ use crate::{
 };
 use jsonrpsee::core::RpcResult as Result;
 use reth_primitives::{
-    AccessListWithGasUsed, Address, BlockId, BlockNumberOrTag, Bytes, Header, H256, H64, U256, U64,
+    serde_helper::JsonStorageKey, AccessListWithGasUsed, Address, BlockId, BlockNumberOrTag, Bytes,
+    Header, H256, H64, U256, U64,
 };
 use reth_provider::{BlockProvider, EvmEnvProvider, HeaderProvider, StateProviderFactory};
 use reth_rpc_api::EthApiServer;
@@ -22,6 +23,7 @@ use reth_rpc_types::{
 };
 use reth_transaction_pool::TransactionPool;
 
+use reth_network_api::NetworkInfo;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use tracing::trace;
@@ -32,7 +34,7 @@ where
     Self: EthApiSpec + EthTransactions,
     Pool: TransactionPool + 'static,
     Client: BlockProvider + HeaderProvider + StateProviderFactory + EvmEnvProvider + 'static,
-    Network: Send + Sync + 'static,
+    Network: NetworkInfo + Send + Sync + 'static,
 {
     /// Handler for: `eth_protocolVersion`
     async fn protocol_version(&self) -> Result<U64> {
@@ -176,7 +178,7 @@ where
     async fn storage_at(
         &self,
         address: Address,
-        index: U256,
+        index: JsonStorageKey,
         block_number: Option<BlockId>,
     ) -> Result<H256> {
         trace!(target: "rpc::eth", ?address, ?block_number, "Serving eth_getStorageAt");
@@ -208,7 +210,7 @@ where
     ) -> Result<Bytes> {
         trace!(target: "rpc::eth", ?request, ?block_number, ?state_overrides, "Serving eth_call");
         let (res, _env) = self
-            .execute_call_at(
+            .transact_call_at(
                 request,
                 block_number.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest)),
                 state_overrides,
@@ -370,7 +372,7 @@ where
 
     /// Handler for: `eth_hashrate`
     async fn hashrate(&self) -> Result<U256> {
-        Err(internal_rpc_err("unimplemented"))
+        Ok(U256::ZERO)
     }
 
     /// Handler for: `eth_getWork`
@@ -380,7 +382,7 @@ where
 
     /// Handler for: `eth_submitHashrate`
     async fn submit_hashrate(&self, _hashrate: U256, _id: H256) -> Result<bool> {
-        Err(internal_rpc_err("unimplemented"))
+        Ok(false)
     }
 
     /// Handler for: `eth_submitWork`
@@ -421,7 +423,7 @@ where
     async fn get_proof(
         &self,
         address: Address,
-        keys: Vec<H256>,
+        keys: Vec<JsonStorageKey>,
         block_number: Option<BlockId>,
     ) -> Result<EIP1186AccountProofResponse> {
         trace!(target: "rpc::eth", ?address, ?keys, ?block_number, "Serving eth_getProof");

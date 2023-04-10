@@ -1,10 +1,12 @@
 [workspace]
 members = [
     "bin/reth",
+    "crates/consensus/auto-seal",
     "crates/consensus/beacon",
     "crates/consensus/common",
     "crates/executor",
     "crates/interfaces",
+    "crates/miner",
     "crates/metrics/metrics-derive",
     "crates/metrics/common",
     "crates/net/common",
@@ -38,6 +40,7 @@ members = [
     "crates/tracing",
     "crates/tasks",
     "crates/transaction-pool",
+    "crates/trie",
 ]
 exclude = ["crate-template"]
 default-members = ["bin/reth"]

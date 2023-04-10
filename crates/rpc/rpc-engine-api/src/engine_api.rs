@@ -1,9 +1,9 @@
 use crate::{EngineApiError, EngineApiMessage, EngineApiResult};
 use futures::StreamExt;
 use reth_beacon_consensus::BeaconEngineMessage;
-use reth_primitives::{BlockHash, BlockId, BlockNumber, ChainSpec, Hardfork, H64};
+use reth_primitives::{BlockHash, BlockId, BlockNumber, ChainSpec, Hardfork};
 use reth_provider::{BlockProvider, EvmEnvProvider, HeaderProvider, StateProviderFactory};
-use reth_rpc_types::engine::{ExecutionPayload, ExecutionPayloadBodies, TransitionConfiguration};
+use reth_rpc_types::engine::{ExecutionPayloadBodies, TransitionConfiguration};
 use std::{
     future::Future,
     pin::Pin,
@@ -55,7 +55,8 @@ impl<Client: HeaderProvider + BlockProvider + StateProviderFactory + EvmEnvProvi
                 let _ = tx.send(self.exchange_transition_configuration(config));
             }
             EngineApiMessage::GetPayload(payload_id, tx) => {
-                let _ = tx.send(self.get_payload(payload_id).ok_or(EngineApiError::PayloadUnknown));
+                // forward message to the consensus engine
+                let _ = self.engine_tx.send(BeaconEngineMessage::GetPayload { payload_id, tx });
             }
             EngineApiMessage::GetPayloadBodiesByHash(hashes, tx) => {
                 let _ = tx.send(self.get_payload_bodies_by_hash(hashes));
@@ -78,15 +79,6 @@ impl<Client: HeaderProvider + BlockProvider + StateProviderFactory + EvmEnvProvi
         }
     }
 
-    /// Called to retrieve the latest state of the network, validate new blocks, and maintain
-    /// consistency between the Consensus and Execution layers.
-    ///
-    /// NOTE: Will always result in `PayloadUnknown` since we don't support block
-    /// building for now.
-    pub fn get_payload(&self, _payload_id: H64) -> Option<ExecutionPayload> {
-        None
-    }
-
     /// Called to retrieve execution payload bodies by range.
     pub fn get_payload_bodies_by_range(
         &self,
@@ -98,7 +90,7 @@ impl<Client: HeaderProvider + BlockProvider + StateProviderFactory + EvmEnvProvi
         }
 
         if start == 0 || count == 0 {
-            return Err(EngineApiError::InvalidParams)
+            return Err(EngineApiError::InvalidBodiesRange { start, count })
         }
 
         let mut result = Vec::with_capacity(count as usize);
@@ -295,7 +287,10 @@ mod tests {
                 handle.send_message(EngineApiMessage::GetPayloadBodiesByRange(
                     start, count, result_tx,
                 ));
-                assert_matches!(result_rx.await, Ok(Err(EngineApiError::InvalidParams)));
+                assert_matches!(
+                    result_rx.await,
+                    Ok(Err(EngineApiError::InvalidBodiesRange { .. }))
+                );
             }
         }
 

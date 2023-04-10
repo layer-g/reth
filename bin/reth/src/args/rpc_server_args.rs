@@ -2,15 +2,16 @@
 
 use crate::dirs::{JwtSecretPath, PlatformPath};
 use clap::Args;
-use jsonrpsee::{core::Error as RpcError, server::ServerHandle};
-use reth_interfaces::events::ChainEventSubscriptions;
+use jsonrpsee::server::ServerHandle;
 use reth_network_api::{NetworkInfo, Peers};
 use reth_primitives::ChainSpec;
-use reth_provider::{BlockProvider, EvmEnvProvider, HeaderProvider, StateProviderFactory};
+use reth_provider::{
+    BlockProvider, CanonStateSubscriptions, EvmEnvProvider, HeaderProvider, StateProviderFactory,
+};
 use reth_rpc::{JwtError, JwtSecret};
 use reth_rpc_builder::{
-    constants, IpcServerBuilder, RethRpcModule, RpcModuleSelection, RpcServerConfig,
-    RpcServerHandle, ServerBuilder, TransportRpcModuleConfig,
+    constants, error::RpcError, IpcServerBuilder, RethRpcModule, RpcModuleSelection,
+    RpcServerConfig, RpcServerHandle, ServerBuilder, TransportRpcModuleConfig,
 };
 use reth_rpc_engine_api::EngineApiHandle;
 use reth_tasks::TaskSpawner;
@@ -105,7 +106,11 @@ impl RpcServerArgs {
             None => {
                 let default_path = PlatformPath::<JwtSecretPath>::default();
                 let fpath = default_path.as_ref();
-                JwtSecret::try_create(fpath)
+                if fpath.exists() {
+                    JwtSecret::from_file(fpath)
+                } else {
+                    JwtSecret::try_create(fpath)
+                }
             }
         }
     }
@@ -130,7 +135,7 @@ impl RpcServerArgs {
         Pool: TransactionPool + Clone + 'static,
         Network: NetworkInfo + Peers + Clone + 'static,
         Tasks: TaskSpawner + Clone + 'static,
-        Events: ChainEventSubscriptions + Clone + 'static,
+        Events: CanonStateSubscriptions + Clone + 'static,
     {
         reth_rpc_builder::launch(
             client,
