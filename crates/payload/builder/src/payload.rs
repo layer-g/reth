@@ -112,6 +112,7 @@ impl PayloadBuilderAttributes {
                 parent.gas_limit,
                 parent.base_fee_per_gas.unwrap_or_default(),
             )),
+            categories: Default::default(),
         };
 
         (cfg, block_env)
