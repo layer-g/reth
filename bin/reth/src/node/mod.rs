@@ -3,7 +3,7 @@
 //! Starts the client
 use crate::{
     args::{get_secret_key, DebugArgs, NetworkArgs, RpcServerArgs},
-    dirs::{ConfigPath, DbPath, PlatformPath, SecretKeyPath},
+    dirs::{ConfigPath, DbPath, SecretKeyPath},
     prometheus_exporter,
     runner::CliContext,
     utils::get_single_header,
@@ -13,6 +13,7 @@ use eyre::Context;
 use fdlimit::raise_fd_limit;
 use futures::{pin_mut, stream::select as stream_select, FutureExt, StreamExt};
 use reth_auto_seal_consensus::{AutoSealBuilder, AutoSealConsensus};
+use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
 use reth_beacon_consensus::{BeaconConsensus, BeaconConsensusEngine, BeaconEngineMessage};
 use reth_db::{
     database::Database,
@@ -36,10 +37,9 @@ use reth_interfaces::{
     },
     sync::SyncStateUpdater,
 };
-use reth_miner::TestPayloadStore;
 use reth_network::{error::NetworkError, NetworkConfig, NetworkHandle, NetworkManager};
 use reth_network_api::NetworkInfo;
-use reth_primitives::{BlockHashOrNumber, ChainSpec, Head, Header, SealedHeader, H256};
+use reth_primitives::{BlockHashOrNumber, Chain, ChainSpec, Head, Header, SealedHeader, H256};
 use reth_provider::{BlockProvider, HeaderProvider, ShareableDatabase};
 use reth_revm::Factory;
 use reth_revm_inspectors::stack::Hook;
@@ -70,7 +70,9 @@ use tokio::sync::{
 };
 use tracing::*;
 
+use crate::dirs::MaybePlatformPath;
 use reth_interfaces::p2p::headers::client::HeadersClient;
+use reth_payload_builder::PayloadBuilderService;
 use reth_stages::stages::{MERKLE_EXECUTION, MERKLE_UNWIND};
 
 pub mod events;
@@ -80,7 +82,7 @@ pub mod events;
 pub struct Command {
     /// The path to the configuration file to use.
     #[arg(long, value_name = "FILE", verbatim_doc_comment, default_value_t)]
-    config: PlatformPath<ConfigPath>,
+    config: MaybePlatformPath<ConfigPath>,
 
     /// The path to the database folder.
     ///
@@ -90,7 +92,7 @@ pub struct Command {
     /// - Windows: `{FOLDERID_RoamingAppData}/reth/db`
     /// - macOS: `$HOME/Library/Application Support/reth/db`
     #[arg(long, value_name = "PATH", verbatim_doc_comment, default_value_t)]
-    db: PlatformPath<DbPath>,
+    db: MaybePlatformPath<DbPath>,
 
     /// The chain this node is running.
     ///
@@ -113,7 +115,7 @@ pub struct Command {
     ///
     /// This also will deterministically set the peer ID.
     #[arg(long, value_name = "PATH", global = true, required = false, default_value_t)]
-    p2p_secret_key: PlatformPath<SecretKeyPath>,
+    p2p_secret_key: MaybePlatformPath<SecretKeyPath>,
 
     /// Enable Prometheus metrics.
     ///
@@ -144,11 +146,14 @@ impl Command {
         // Does not do anything on windows.
         raise_fd_limit();
 
-        let mut config: Config = self.load_config()?;
-        info!(target: "reth::cli", path = %self.config, "Configuration loaded");
+        let mut config: Config = self.load_config_with_chain(self.chain.chain)?;
+        info!(target: "reth::cli", path = %self.config.unwrap_or_chain_default(self.chain.chain), "Configuration loaded");
 
-        info!(target: "reth::cli", path = %self.db, "Opening database");
-        let db = Arc::new(init_db(&self.db)?);
+        // add network name to db directory
+        let db_path = self.db.unwrap_or_chain_default(self.chain.chain);
+
+        info!(target: "reth::cli", path = %db_path, "Opening database");
+        let db = Arc::new(init_db(&db_path)?);
         let shareable_db = ShareableDatabase::new(Arc::clone(&db), Arc::clone(&self.chain));
         info!(target: "reth::cli", "Database opened");
 
@@ -174,7 +179,8 @@ impl Command {
         info!(target: "reth::cli", "Test transaction pool initialized");
 
         info!(target: "reth::cli", "Connecting to P2P network");
-        let secret_key = get_secret_key(&self.p2p_secret_key)?;
+        let secret_key =
+            get_secret_key(self.p2p_secret_key.unwrap_or_chain_default(self.chain.chain))?;
         let network_config = self.load_network_config(
             &config,
             Arc::clone(&db),
@@ -211,13 +217,7 @@ impl Command {
                 debug!(target: "reth::cli", %tip, "Tip manually set");
                 Some(tip_rx)
             }
-            None => {
-                let warn_msg = "No tip specified. \
-                reth cannot communicate with consensus clients, \
-                so a tip must manually be provided for the online stages with --debug.tip <HASH>.";
-                warn!(target: "reth::cli", warn_msg);
-                None
-            }
+            None => None,
         };
 
         // configure blockchain tree
@@ -286,8 +286,19 @@ impl Command {
         ctx.task_executor
             .spawn_critical("events task", events::handle_events(Some(network.clone()), events));
 
-        // TODO: change to non-test or rename this component eventually
-        let test_payload_store = TestPayloadStore::default();
+        // configure the payload builder
+        let payload_generator = BasicPayloadJobGenerator::new(
+            shareable_db.clone(),
+            transaction_pool.clone(),
+            ctx.task_executor.clone(),
+            // TODO use extradata from args
+            BasicPayloadJobGeneratorConfig::default(),
+            Arc::clone(&self.chain),
+        );
+        let (payload_service, payload_builder) = PayloadBuilderService::new(payload_generator);
+
+        debug!(target: "reth::cli", "Spawning payload builder service");
+        ctx.task_executor.spawn_critical("payload builder service", payload_service);
 
         let beacon_consensus_engine = BeaconConsensusEngine::new(
             Arc::clone(&db),
@@ -296,7 +307,7 @@ impl Command {
             blockchain_tree.clone(),
             consensus_engine_rx,
             self.debug.max_block,
-            test_payload_store,
+            payload_builder,
         );
         info!(target: "reth::cli", "Consensus engine initialized");
 
@@ -401,10 +412,12 @@ impl Command {
         Ok(pipeline)
     }
 
-    fn load_config(&self) -> eyre::Result<Config> {
-        confy::load_path::<Config>(&self.config).wrap_err_with(|| {
-            format!("Could not load config file {}", self.config.as_ref().display())
-        })
+    /// Loads the reth config based on the intended chain
+    fn load_config_with_chain(&self, chain: Chain) -> eyre::Result<Config> {
+        // add network name to config directory
+        let config_path = self.config.unwrap_or_chain_default(chain);
+        confy::load_path::<Config>(config_path.clone())
+            .wrap_err_with(|| format!("Could not load config file {}", config_path))
     }
 
     fn init_trusted_nodes(&self, config: &mut Config) {
@@ -464,7 +477,7 @@ impl Command {
             .request_handler(client)
             .split_with_handle();
 
-        let known_peers_file = self.network.persistent_peers_file();
+        let known_peers_file = self.network.persistent_peers_file(self.chain.chain);
         task_executor.spawn_critical_with_signal("p2p network task", |shutdown| {
             run_network_until_shutdown(shutdown, network, known_peers_file)
         });
@@ -689,7 +702,7 @@ async fn run_network_until_shutdown<C>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::IpAddr;
+    use std::{net::IpAddr, path::Path};
 
     #[test]
     fn parse_help_node_command() {
@@ -729,5 +742,40 @@ mod tests {
 
         let cmd = Command::try_parse_from(["reth", "--metrics", "localhost:9000"]).unwrap();
         assert_eq!(cmd.metrics, Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9000)));
+    }
+
+    #[test]
+    fn parse_config_path() {
+        let cmd = Command::try_parse_from(["reth", "--config", "my/path/to/reth.toml"]).unwrap();
+        assert_eq!(
+            cmd.config.unwrap_or_chain_default(cmd.chain.chain).as_ref(),
+            Path::new("my/path/to/reth.toml")
+        );
+
+        let cmd = Command::try_parse_from(["reth"]).unwrap();
+        assert!(
+            cmd.config
+                .unwrap_or_chain_default(cmd.chain.chain)
+                .as_ref()
+                .ends_with("reth/mainnet/reth.toml"),
+            "{:?}",
+            cmd.config
+        );
+    }
+
+    #[test]
+    fn parse_db_path() {
+        let cmd = Command::try_parse_from(["reth", "--db", "my/path/to/db"]).unwrap();
+        assert_eq!(
+            cmd.db.unwrap_or_chain_default(cmd.chain.chain).as_ref(),
+            Path::new("my/path/to/db")
+        );
+
+        let cmd = Command::try_parse_from(["reth"]).unwrap();
+        assert!(
+            cmd.db.unwrap_or_chain_default(cmd.chain.chain).as_ref().ends_with("reth/mainnet/db"),
+            "{:?}",
+            cmd.config
+        );
     }
 }

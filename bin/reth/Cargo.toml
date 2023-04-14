@@ -31,7 +31,8 @@ reth-downloaders = { path = "../../crates/net/downloaders", features = ["test-ut
 reth-tracing = { path = "../../crates/tracing" }
 reth-tasks = { path = "../../crates/tasks" }
 reth-net-nat = { path = "../../crates/net/nat" }
-reth-miner = { path = "../../crates/miner" }
+reth-payload-builder = { path = "../../crates/payload/builder" }
+reth-basic-payload-builder = { path = "../../crates/payload/basic" }
 reth-discv4 = { path = "../../crates/net/discv4" }
 
 # crypto
@@ -78,6 +79,7 @@ jsonrpsee = { version = "0.16", features = ["server"] }
 # misc
 eyre = "0.6.8"
 clap = { version = "4", features = ["derive", "cargo"] }
+num_cpus = "1.13.0"
 tempfile = { version = "3.3.0" }
 backon = "0.4"
 hex = "0.4"

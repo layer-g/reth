@@ -3,7 +3,10 @@
 //! The payload builder is responsible for building payloads.
 //! Once a new payload is created, it is continuously updated.
 
-use crate::{traits::PayloadJobGenerator, BuiltPayload, PayloadBuilderAttributes, PayloadJob};
+use crate::{
+    error::PayloadBuilderError, traits::PayloadJobGenerator, BuiltPayload,
+    PayloadBuilderAttributes, PayloadJob,
+};
 use futures_util::stream::{StreamExt, TryStreamExt};
 use reth_rpc_types::engine::PayloadId;
 use std::{
@@ -50,6 +53,16 @@ impl PayloadBuilderHandle {
         rx.await.ok()?
     }
 
+    /// Sends a message to the service to start building a new payload for the given payload.
+    ///
+    /// This is the same as [PayloadBuilderHandle::new_payload] but does not wait for the result.
+    pub fn send_new_payload(&self, attr: PayloadBuilderAttributes) -> PayloadId {
+        let id = attr.payload_id();
+        let (tx, _) = oneshot::channel();
+        let _ = self.to_service.send(PayloadServiceCommand::BuildNewPayload(attr, tx));
+        id
+    }
+
     /// Starts building a new payload for the given payload attributes.
     ///
     /// Returns the identifier of the payload.
@@ -58,10 +71,10 @@ impl PayloadBuilderHandle {
     pub async fn new_payload(
         &self,
         attr: PayloadBuilderAttributes,
-    ) -> Result<PayloadId, oneshot::error::RecvError> {
+    ) -> Result<PayloadId, PayloadBuilderError> {
         let (tx, rx) = oneshot::channel();
         let _ = self.to_service.send(PayloadServiceCommand::BuildNewPayload(attr, tx));
-        rx.await
+        rx.await?
     }
 }
 
@@ -168,15 +181,24 @@ where
                 match cmd {
                     PayloadServiceCommand::BuildNewPayload(attr, tx) => {
                         let id = attr.payload_id();
+                        let mut res = Ok(id);
+
                         if !this.contains_payload(id) {
                             // no job for this payload yet, create one
-                            new_job = true;
-                            let job = this.generator.new_payload_job(attr);
-                            this.payload_jobs.push((job, id));
+                            match this.generator.new_payload_job(attr) {
+                                Ok(job) => {
+                                    new_job = true;
+                                    this.payload_jobs.push((job, id));
+                                }
+                                Err(err) => {
+                                    warn!(?err, %id, "failed to create payload job");
+                                    res = Err(err);
+                                }
+                            }
                         }
 
                         // return the id of the payload
-                        let _ = tx.send(id);
+                        let _ = tx.send(res);
                     }
                     PayloadServiceCommand::GetPayload(id, tx) => {
                         let _ = tx.send(this.get_payload(id));
@@ -195,7 +217,10 @@ where
 #[derive(Debug)]
 enum PayloadServiceCommand {
     /// Start building a new payload.
-    BuildNewPayload(PayloadBuilderAttributes, oneshot::Sender<PayloadId>),
+    BuildNewPayload(
+        PayloadBuilderAttributes,
+        oneshot::Sender<Result<PayloadId, PayloadBuilderError>>,
+    ),
     /// Get the current payload.
     GetPayload(PayloadId, oneshot::Sender<Option<Arc<BuiltPayload>>>),
 }

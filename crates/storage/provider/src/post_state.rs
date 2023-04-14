@@ -7,7 +7,8 @@ use reth_db::{
     Error as DbError,
 };
 use reth_primitives::{
-    Account, Address, Bytecode, Receipt, StorageEntry, TransitionId, H256, U256,
+    bloom::logs_bloom, proofs::calculate_receipt_root_ref, Account, Address, Bloom, Bytecode, Log,
+    Receipt, StorageEntry, TransitionId, H256, U256,
 };
 use std::collections::BTreeMap;
 
@@ -260,6 +261,21 @@ impl PostState {
     /// Get the receipts for the transactions executed to form this [PostState].
     pub fn receipts(&self) -> &[Receipt] {
         &self.receipts
+    }
+
+    /// Returns an iterator over all logs in this [PostState].
+    pub fn logs(&self) -> impl Iterator<Item = &Log> + '_ {
+        self.receipts().iter().flat_map(|r| r.logs.iter())
+    }
+
+    /// Returns the logs bloom for all recorded logs.
+    pub fn logs_bloom(&self) -> Bloom {
+        logs_bloom(self.logs())
+    }
+
+    /// Returns the receipt root for all recorded receipts.
+    pub fn receipts_root(&self) -> H256 {
+        calculate_receipt_root_ref(self.receipts().iter().map(Into::into))
     }
 
     /// Get the number of transitions causing this [PostState]
