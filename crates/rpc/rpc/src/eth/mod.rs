@@ -9,9 +9,10 @@ mod logs_utils;
 mod pubsub;
 pub(crate) mod revm_utils;
 mod signer;
-pub(crate) mod utils;
+pub mod utils;
 
 pub use api::{EthApi, EthApiSpec, EthTransactions, TransactionSource};
 pub use filter::EthFilter;
 pub use id_provider::EthSubscriptionIdProvider;
 pub use pubsub::EthPubSub;
+pub use utils::recover_raw_transaction;
