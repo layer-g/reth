@@ -6,7 +6,7 @@ use reth_primitives::{Bytes, TransactionSigned, TransactionSignedEcRecovered};
 /// Recovers a [TransactionSignedEcRecovered] from an enveloped encoded byte stream.
 ///
 /// See [TransactionSigned::decode_enveloped]
-pub(crate) fn recover_raw_transaction(data: Bytes) -> EthResult<TransactionSignedEcRecovered> {
+pub fn recover_raw_transaction(data: Bytes) -> EthResult<TransactionSignedEcRecovered> {
     if data.is_empty() {
         return Err(EthApiError::EmptyRawTransactionData)
     }
