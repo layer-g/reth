@@ -54,4 +54,4 @@ debug = true
 revm = { git = "https://github.com/layer-g/revm", branch = "tan" }
 revm-primitives = { git = "https://github.com/layer-g/revm", branch = "tan" }
 # patched for quantity U256 responses <https://github.com/recmo/uint/issues/224>
-ruint = { git = "https://github.com/paradigmxyz/uint" }
+# ruint = { git = "https://github.com/paradigmxyz/uint" }
