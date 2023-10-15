@@ -42,7 +42,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{mpsc::UnboundedSender, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use tracing::{trace, warn};
+use tracing::{trace, warn, info, debug};
 
 mod client;
 mod mode;
@@ -124,7 +124,11 @@ where
             .latest_header()
             .ok()
             .flatten()
-            .unwrap_or_else(|| chain_spec.sealed_genesis_header());
+            .unwrap_or_else(|| {
+                info!(target: "reth::cli", "latest_header() not found - using sealed_genesis_header()");
+                chain_spec.sealed_genesis_header()
+            });
+        info!(target: "reth::cli", ?latest_header, "new instance of AutoSealBuilder");
 
         Self {
             storage: Storage::new(latest_header),
@@ -308,8 +312,11 @@ impl StorageInner {
         let (receipts, gas_used) =
             executor.execute_transactions(block, U256::ZERO, Some(senders))?;
 
+        info!(target: "AutoSeal::execute()", ?receipts, "receipts: ");
+
         // Save receipts.
         executor.save_receipts(receipts)?;
+        info!(target: "AutoSeal::execute()", "receipts saved");
 
         // add post execution state change
         // Withdrawals, rewards etc.
@@ -331,14 +338,19 @@ impl StorageInner {
         client: &S,
         gas_used: u64,
     ) -> Result<Header, BlockExecutionError> {
-        let receipts = bundle_state.receipts_by_block(header.number);
+        
+        info!(target: "AutoSeal::complete_header()", ?header, ?bundle_state, "incoming header");
+        // let receipts = bundle_state.receipts_by_block(header.number);
+        let receipts = bundle_state.receipts().first().cloned().unwrap_or_default();
         header.receipts_root = if receipts.is_empty() {
+            debug!(target: "AutoSeal::complete_header()", "receipts are empty");
             EMPTY_RECEIPTS
         } else {
             let receipts_with_bloom = receipts
                 .iter()
                 .map(|r| (*r).clone().expect("receipts have not been pruned").into())
                 .collect::<Vec<ReceiptWithBloom>>();
+            debug!(target: "AutoSeal::complete_header()", "receipts with bloom");
             header.logs_bloom =
                 receipts_with_bloom.iter().fold(Bloom::zero(), |bloom, r| bloom | r.bloom);
             proofs::calculate_receipt_root(&receipts_with_bloom)
@@ -386,12 +398,12 @@ impl StorageInner {
         let Block { header, body, .. } = block;
         let body = BlockBody { transactions: body, ommers: vec![], withdrawals: None };
 
-        trace!(target: "consensus::auto", ?bundle_state, ?header, ?body, "executed block, calculating state root and completing header");
+        info!(target: "consensus::auto", ?bundle_state, ?header, ?body, "executed block, calculating state root and completing header");
 
         // fill in the rest of the fields
         let header = self.complete_header(header, &bundle_state, client, gas_used)?;
 
-        trace!(target: "consensus::auto", root=?header.state_root, ?body, "calculated root");
+        info!(target: "consensus::auto", root=?header.state_root, ?body, "calculated root");
 
         // finally insert into storage
         self.insert_new_block(header.clone(), body);

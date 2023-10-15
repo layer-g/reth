@@ -9,6 +9,7 @@ use reth_provider::{
 use reth_tasks::{TaskSpawner, TokioTaskExecutor};
 use revm::primitives::{BlockEnv, CfgEnv};
 use schnellru::{ByLength, Limiter};
+use tracing::info;
 use std::{
     future::Future,
     pin::Pin,
@@ -475,15 +476,20 @@ where
     St: Stream<Item = CanonStateNotification> + Unpin + 'static,
 {
     while let Some(event) = events.next().await {
+        info!(target: "CacheNewBlocks", ?event);
         if let Some(committed) = event.committed() {
             // we're only interested in new committed blocks
             let (blocks, state) = committed.inner();
 
+            info!(target: "CacheNewBlocks::committed", ?blocks, ?state);
+
             let blocks = blocks.iter().map(|(_, block)| block.block.clone()).collect::<Vec<_>>();
 
+            info!(target: "CacheNewBlocks::blocks", ?blocks);
             // also cache all receipts of the blocks
             let mut receipts = Vec::with_capacity(blocks.len());
             for block in &blocks {
+                info!(target: "CacheNewBlocks::BlockReceipts", block_hash = ?block.hash, block_num = ?block.number,);
                 let block_receipts = BlockReceipts {
                     block_hash: block.hash,
                     receipts: state.receipts_by_block(block.number).to_vec(),

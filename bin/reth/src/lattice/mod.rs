@@ -47,7 +47,7 @@ use reth_interfaces::{
         either::EitherDownloader,
         headers::{client::HeadersClient, downloader::HeaderDownloader},
     },
-    RethResult,
+    RethResult, blockchain_tree::BlockchainTreeViewer,
 };
 use reth_network::{error::NetworkError, NetworkConfig, NetworkHandle, NetworkManager};
 use reth_network_api::{NetworkInfo, PeersInfo};
@@ -318,6 +318,10 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
             .with_sync_metrics_tx(metrics_tx.clone()),
         );
 
+        info!(target: "reth::cli", indices = ?blockchain_tree.blocks(), "blockchain tree blocks so far: ");
+        info!(target: "reth::cli", indices = ?blockchain_tree.canonical_blocks(), "canonical blocks: ");
+        info!(target: "reth::cli", indices = ?blockchain_tree.canonical_tip(), "canonical tip: ");
+
         // setup the blockchain provider
         let factory = ProviderFactory::new(Arc::clone(&db), Arc::clone(&self.chain));
         let blockchain_db = BlockchainProvider::new(factory, blockchain_tree.clone())?;
@@ -401,17 +405,17 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         let (mut pipeline, client) = if self.dev.dev {
             info!(target: "reth::cli", "Starting Reth in dev mode");
 
-            let mining_mode =//if let Some(interval) = self.dev.block_time {
-            //     MiningMode::interval(interval)
-            // } else if let Some(max_transactions) = self.dev.block_max_transactions {
-            //     MiningMode::instant(
-            //         max_transactions,
-            //         transaction_pool.pending_transactions_listener(),
-            //     )
-            // } else {
-            //     info!(target: "reth::cli", "No mining mode specified, defaulting to ReadyTransaction");
-                MiningMode::instant(1, transaction_pool.pending_transactions_listener());
-            // };
+            let mining_mode = if let Some(interval) = self.dev.block_time {
+                MiningMode::interval(interval)
+            } else if let Some(max_transactions) = self.dev.block_max_transactions {
+                MiningMode::instant(
+                    max_transactions,
+                    transaction_pool.pending_transactions_listener(),
+                )
+            } else {
+                info!(target: "reth::cli", "No mining mode specified, defaulting to ReadyTransaction");
+                MiningMode::instant(1, transaction_pool.pending_transactions_listener())
+            };
 
             let (_, client, mut task) = AutoSealBuilder::new(
                 Arc::clone(&self.chain),
