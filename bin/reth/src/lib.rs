@@ -42,6 +42,7 @@ pub mod stage;
 pub mod test_vectors;
 pub mod utils;
 pub mod version;
+pub mod lattice;
 
 /// Re-exported from `reth_provider`.
 pub mod providers {

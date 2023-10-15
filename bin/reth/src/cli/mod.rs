@@ -8,7 +8,7 @@ use crate::{
     node, p2p, recover,
     runner::CliRunner,
     stage, test_vectors,
-    version::{LONG_VERSION, SHORT_VERSION},
+    version::{LONG_VERSION, SHORT_VERSION}, lattice,
 };
 use clap::{value_parser, ArgAction, Args, Parser, Subcommand, ValueEnum};
 use reth_primitives::ChainSpec;
@@ -83,6 +83,7 @@ impl<Ext: RethCliExt> Cli<Ext> {
 
         let runner = CliRunner;
         match self.command {
+            Commands::Lattice(command) => runner.run_command_until_exit(|ctx| command.execute(ctx)),
             Commands::Node(command) => runner.run_command_until_exit(|ctx| command.execute(ctx)),
             Commands::Init(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Import(command) => runner.run_blocking_until_ctrl_c(command.execute()),
@@ -122,6 +123,9 @@ pub fn run() -> eyre::Result<()> {
 /// Commands to be executed
 #[derive(Debug, Subcommand)]
 pub enum Commands<Ext: RethCliExt = ()> {
+    /// Start the lattice node
+    #[command(name = "lattice")]
+    Lattice(lattice::LatticeCommand<Ext>),
     /// Start the node
     #[command(name = "node")]
     Node(node::NodeCommand<Ext>),
