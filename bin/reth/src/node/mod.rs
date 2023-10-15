@@ -20,6 +20,7 @@ use crate::{
     utils::get_single_header,
     version::SHORT_VERSION,
 };
+use hex_literal::hex;
 use clap::{value_parser, Parser};
 use eyre::Context;
 use fdlimit::raise_fd_limit;
@@ -54,13 +55,13 @@ use reth_primitives::{
     constants::eip4844::{LoadKzgSettingsError, MAINNET_KZG_TRUSTED_SETUP},
     kzg::KzgSettings,
     stage::StageId,
-    BlockHashOrNumber, BlockNumber, ChainSpec, DisplayHardforks, Head, SealedHeader, H256,
+    BlockHashOrNumber, BlockNumber, ChainSpec, DisplayHardforks, Head, SealedHeader, H256, Chain, ChainSpecBuilder, Genesis, GenesisAccount, U256, Bytes, Address,
 };
 use reth_provider::{
     providers::BlockchainProvider, BlockHashReader, BlockReader, CanonStateSubscriptions,
     HeaderProvider, ProviderFactory, StageCheckpointReader,
 };
-use reth_revm::Factory;
+use reth_revm::{Factory, primitives::HashMap};
 use reth_revm_inspectors::stack::Hook;
 use reth_rpc_engine_api::EngineApi;
 use reth_stages::{
@@ -234,6 +235,7 @@ impl<Ext: RethCliExt> NodeCommand<Ext> {
         // Raise the fd limit of the process.
         // Does not do anything on windows.
         raise_fd_limit();
+        self.build_chain_spec()?;
 
         // add network name to data dir
         let data_dir = self.datadir.unwrap_or_chain_default(self.chain.chain);
@@ -904,6 +906,58 @@ impl<Ext: RethCliExt> NodeCommand<Ext> {
         self.rpc.http_port -= self.instance - 1;
         // ws port is scaled by a factor of instance * 2
         self.rpc.ws_port += self.instance * 2 - 2;
+    }
+
+    fn build_chain_spec(&mut self) -> eyre::Result<()> {
+        let chain = Chain::Id(2600);
+        let genesis = self.build_genesis()?;
+        let mut chain_spec = ChainSpecBuilder::default()
+            .chain(chain)
+            .shanghai_activated()
+            .genesis(genesis)
+            .build();
+
+        let genesis_hash = chain_spec.genesis_hash();
+        chain_spec.genesis_hash = Some(genesis_hash);
+
+        self.chain = Arc::new(chain_spec);
+        Ok(())
+        // Ok(chain_spec)
+    }
+
+    /// Build the genesis struct for chain spec
+    fn build_genesis(&self) -> eyre::Result<Genesis> {
+        // whitelist for setting transaction categories
+        let whitelist_address = hex!("1a771c3000000000000000000000000000000000").into();
+        let whitelist_contract = GenesisAccount::default()
+            .with_nonce(Some(1))
+            .with_balance(U256::ZERO)
+            .with_code(Some(Bytes::from(b"code")));
+
+        // random coinbase
+        // 4/18
+        // mnemonic: chronic good mimic tube glance wreck badge theme park expect select empty
+        let cbw_address = hex!("F8DC4E397B48E85106a7c3CEd81D45de71E4Caf3").into();
+        let cbw_account = GenesisAccount::default().with_balance(U256::MAX);
+
+        // bob private key: 0x99b3c12287537e38c90a9219d4cb074a89a16e9cdb20bf85728ebd97c343e342
+        let bob_address = hex!("6Be02d1d3665660d22FF9624b7BE0551ee1Ac91b").into();
+        let bob_account = GenesisAccount::default().with_balance(U256::MAX);
+
+        // amir address
+        let amir_address = hex!("2F874431527b8bEA6eD29d1D20eBa1c781FDaaf1").into();
+        let amir_account = GenesisAccount::default().with_balance(U256::MAX);
+
+        let accounts: HashMap<Address, GenesisAccount> = HashMap::from([
+            (whitelist_address, whitelist_contract),
+            (bob_address, bob_account),
+            (cbw_address, cbw_account),
+            (amir_address, amir_account),
+        ]);
+
+        let genesis = Genesis::default().extend_accounts(accounts);
+
+        Ok(genesis)
     }
 }
 

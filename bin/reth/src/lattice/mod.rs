@@ -20,6 +20,7 @@ use crate::{
     utils::get_single_header,
     version::SHORT_VERSION,
 };
+use hex_literal::hex;
 use clap::{value_parser, Parser};
 use eyre::Context;
 use fdlimit::raise_fd_limit;
@@ -54,13 +55,13 @@ use reth_primitives::{
     constants::eip4844::{LoadKzgSettingsError, MAINNET_KZG_TRUSTED_SETUP},
     kzg::KzgSettings,
     stage::StageId,
-    BlockHashOrNumber, BlockNumber, ChainSpec, DisplayHardforks, Head, SealedHeader, H256,
+    BlockHashOrNumber, BlockNumber, ChainSpec, DisplayHardforks, Head, SealedHeader, H256, Genesis, GenesisAccount, U256, Bytes, Chain, ChainSpecBuilder, Address,
 };
 use reth_provider::{
     providers::BlockchainProvider, BlockHashReader, BlockReader, CanonStateSubscriptions,
     HeaderProvider, ProviderFactory, StageCheckpointReader,
 };
-use reth_revm::Factory;
+use reth_revm::{Factory, primitives::HashMap};
 use reth_revm_inspectors::stack::Hook;
 use reth_rpc_engine_api::EngineApi;
 use reth_stages::{
@@ -235,6 +236,10 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         // Does not do anything on windows.
         raise_fd_limit();
 
+        // build chain spec and store to `self.chain`
+        self.build_chain_spec()?;
+        debug!("\n\n\nchain-spec{:?}", self.chain);
+
         // add network name to data dir
         let data_dir = self.datadir.unwrap_or_chain_default(self.chain.chain);
         let config_path = self.config.clone().unwrap_or(data_dir.config_path());
@@ -244,7 +249,23 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         // always store reth.toml in the data dir, not the chain specific data dir
         info!(target: "reth::cli", path = ?config_path, "Configuration loaded");
 
-        let db_path = data_dir.db_path();
+        // set db to tempdir if dev flag is passed
+        let db_path = if self.dev.dev {
+            // Error during tempdir creation
+            let temp_path = tempfile::TempDir::new()
+                .expect("Not able to create a temporary directory.").into_path();
+            info!(
+                ?temp_path,
+                "--dev arg passed. Creating temporary database at:\n"
+            );
+            temp_path
+        } else {
+            info!("Creating persistent db at: {:#?}", self.db);
+            // lattice dir
+            data_dir.db_path()
+        };
+
+        // let db_path = data_dir.db_path();
         info!(target: "reth::cli", path = ?db_path, "Opening database");
         let db = Arc::new(init_db(&db_path, self.db.log_level)?);
         info!(target: "reth::cli", "Database opened");
@@ -254,15 +275,16 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         debug!(target: "reth::cli", chain=%self.chain.chain, genesis=?self.chain.genesis_hash(), "Initializing genesis");
 
         let genesis_hash = init_genesis(db.clone(), self.chain.clone())?;
+        info!(target: "reth::cli", ?genesis_hash, "Genesis Hash: ");
 
         info!(target: "reth::cli", "{}", DisplayHardforks::from(self.chain.hardforks().clone()));
 
-        let consensus: Arc<dyn Consensus> = if self.dev.dev {
-            debug!(target: "reth::cli", "Using auto seal");
-            Arc::new(AutoSealConsensus::new(Arc::clone(&self.chain)))
-        } else {
-            Arc::new(BeaconConsensus::new(Arc::clone(&self.chain)))
-        };
+        debug!(target: "reth::cli", "Using auto seal");
+        let consensus: Arc<dyn Consensus> =//if self.dev.dev {
+            Arc::new(AutoSealConsensus::new(Arc::clone(&self.chain)));
+        // } else {
+        //     Arc::new(BeaconConsensus::new(Arc::clone(&self.chain)))
+        // };
 
         self.init_trusted_nodes(&mut config);
 
@@ -334,6 +356,7 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         let secret_key = get_secret_key(&network_secret_path)?;
         let default_peers_path = data_dir.known_peers_path();
         let head = self.lookup_head(Arc::clone(&db)).expect("the head block is missing");
+        debug!("lookup head returned: {head:?}");
         let network_config = self.load_network_config(
             &config,
             Arc::clone(&db),
@@ -375,7 +398,7 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         // };
 
         // Configure the pipeline
-        let (mut pipeline, client) = {
+        let (mut pipeline, client) = if self.dev.dev {
             info!(target: "reth::cli", "Starting Reth in dev mode");
 
             let mining_mode =//if let Some(interval) = self.dev.block_time {
@@ -418,23 +441,23 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
             debug!(target: "reth::cli", "Spawning auto mine task");
             ctx.task_executor.spawn(Box::pin(task));
 
-            (pipeline, client)
-        };// else {
-        //     let pipeline = self
-        //         .build_networked_pipeline(
-        //             &config,
-        //             network_client.clone(),
-        //             Arc::clone(&consensus),
-        //             db.clone(),
-        //             &ctx.task_executor,
-        //             metrics_tx,
-        //             prune_config.clone(),
-        //             max_block,
-        //         )
-        //         .await?;
+            (pipeline, EitherDownloader::Left(client))
+        } else {
+            let pipeline = self
+                .build_networked_pipeline(
+                    &config,
+                    network_client.clone(),
+                    Arc::clone(&consensus),
+                    db.clone(),
+                    &ctx.task_executor,
+                    metrics_tx,
+                    prune_config.clone(),
+                    max_block,
+                )
+                .await?;
 
-        //     (pipeline, EitherDownloader::Right(network_client))
-        // };
+            (pipeline, EitherDownloader::Right(network_client))
+        };
 
         let pipeline_events = pipeline.events();
 
@@ -548,13 +571,15 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
 
         info!(target: "reth::cli", "Consensus engine has exited.");
 
-        if self.debug.terminate {
-            Ok(())
-        } else {
+        // if self.debug.terminate {
+        //     Ok(())
+        // } else {
             // The pipeline has finished downloading blocks up to `--debug.tip` or
             // `--debug.max-block`. Keep other node components alive for further usage.
+
+            // wait forever
             futures::future::pending().await
-        }
+        // }
     }
 
     /// Constructs a [Pipeline] that's wired to the network
@@ -905,6 +930,60 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         // ws port is scaled by a factor of instance * 2
         self.rpc.ws_port += self.instance * 2 - 2;
     }
+
+
+    fn build_chain_spec(&mut self) -> eyre::Result<()> {
+        let chain = Chain::Id(2600);
+        let genesis = self.build_genesis()?;
+        let mut chain_spec = ChainSpecBuilder::default()
+            .chain(chain)
+            .shanghai_activated()
+            .genesis(genesis)
+            .build();
+
+        let genesis_hash = chain_spec.genesis_hash();
+        chain_spec.genesis_hash = Some(genesis_hash);
+
+        self.chain = Arc::new(chain_spec);
+        Ok(())
+        // Ok(chain_spec)
+    }
+
+    /// Build the genesis struct for chain spec
+    fn build_genesis(&self) -> eyre::Result<Genesis> {
+        // whitelist for setting transaction categories
+        let whitelist_address = hex!("1a771c3000000000000000000000000000000000").into();
+        let whitelist_contract = GenesisAccount::default()
+            .with_nonce(Some(1))
+            .with_balance(U256::ZERO)
+            .with_code(Some(Bytes::from(b"code")));
+
+        // random coinbase
+        // 4/18
+        // mnemonic: chronic good mimic tube glance wreck badge theme park expect select empty
+        let cbw_address = hex!("F8DC4E397B48E85106a7c3CEd81D45de71E4Caf3").into();
+        let cbw_account = GenesisAccount::default().with_balance(U256::MAX);
+
+        // bob private key: 0x99b3c12287537e38c90a9219d4cb074a89a16e9cdb20bf85728ebd97c343e342
+        let bob_address = hex!("6Be02d1d3665660d22FF9624b7BE0551ee1Ac91b").into();
+        let bob_account = GenesisAccount::default().with_balance(U256::MAX);
+
+        // amir address
+        let amir_address = hex!("2F874431527b8bEA6eD29d1D20eBa1c781FDaaf1").into();
+        let amir_account = GenesisAccount::default().with_balance(U256::MAX);
+
+        let accounts: HashMap<Address, GenesisAccount> = HashMap::from([
+            (whitelist_address, whitelist_contract),
+            (bob_address, bob_account),
+            (cbw_address, cbw_account),
+            (amir_address, amir_account),
+        ]);
+
+        let genesis = Genesis::default().extend_accounts(accounts);
+
+        Ok(genesis)
+    }
+
 }
 
 /// Drives the [NetworkManager] future until a [Shutdown](reth_tasks::shutdown::Shutdown) signal is

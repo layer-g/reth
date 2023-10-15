@@ -123,8 +123,11 @@ where
                         })
                         .unzip();
 
+                    debug!("insert task: {:?}", transactions.len());
+
                     match storage.build_and_execute(transactions.clone(), &client, chain_spec) {
                         Ok((new_header, bundle_state)) => {
+                            debug!("\nbuild and execute was successful: {new_header:?}\n");
                             // clear all transactions from pool
                             pool.remove_transactions(
                                 transactions.iter().map(|tx| tx.hash()).collect(),
@@ -136,6 +139,8 @@ where
                                 safe_block_hash: new_header.hash,
                             };
                             drop(storage);
+
+                            debug!("submitting state:\n{state:?}");
 
                             // TODO: make this a future
                             // await the fcu call rx for SYNCING, then wait for a VALID response
@@ -184,6 +189,8 @@ where
                             let sealed_block_with_senders =
                                 SealedBlockWithSenders::new(sealed_block, senders)
                                     .expect("senders are valid");
+                            
+                            debug!("\n\n{sealed_block_with_senders:?}\n\n");
 
                             // update canon chain for rpc
                             client.set_canonical_head(new_header.clone());
