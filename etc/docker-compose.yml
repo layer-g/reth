@@ -35,6 +35,7 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.external-url=http://localhost:9090
+      - --web.route-prefix=/debug
 
   grafana:
     restart: unless-stopped
