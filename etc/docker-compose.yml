@@ -4,7 +4,8 @@ name: 'lattice'
 services:
   reth:
     restart: unless-stopped
-    image: us-docker.pkg.dev/telcoin-network/telcoin-network/lattice:latest
+    # image: us-docker.pkg.dev/telcoin-network/telcoin-network/lattice:latest
+    image: layerg/auto-seal:latest
     ports:
       - '9001:9001' # metrics
       - '8545:8545' # rpc
