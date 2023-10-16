@@ -1,30 +1,23 @@
 version: '3.9'
-name: 'reth'
+name: 'lattice'
 
 services:
   reth:
     restart: unless-stopped
-    image: ghcr.io/paradigmxyz/reth
+    image: us-docker.pkg.dev/telcoin-network/telcoin-network/lattice:latest
     ports:
       - '9001:9001' # metrics
-      - '30303:30303' # eth/66 peering
       - '8545:8545' # rpc
       - '8551:8551' # engine
     volumes:
-      - rethdata_mainnet:/root/.local/share/reth/mainnet/db
-      - rethdata_sepolia:/root/.local/share/reth/sepolia/db
+      - rethdata_lattice:/root/.local/share/reth/2600/db
+      # - rethdata_sepolia:/root/.local/share/reth/sepolia/db
       - rethlogs:/root/rethlogs
-      - ./jwttoken:/root/jwt:ro
-    # For Sepolia, replace `--chain mainnet` with `--chain sepolia`
+      # - ./jwttoken:/root/jwt:ro
     command: >
-      node
-      --chain mainnet
-      --metrics 0.0.0.0:9001
-      --log.directory /root/rethlogs
-      --authrpc.addr 0.0.0.0
-      --authrpc.port 8551
-      --authrpc.jwtsecret /root/jwt/jwt.hex
-      --http --http.addr 0.0.0.0 --http.port 8545
+      lattice --dev 
+      --http --http.addr 0.0.0.0
+      --http.port 8545
       --http.api "eth,net,web3"
 
   prometheus:
@@ -64,9 +57,7 @@ services:
              /run.sh"
     
 volumes:
-  rethdata_mainnet:
-    driver: local
-  rethdata_sepolia:
+  rethdata_lattice:
     driver: local
   rethlogs:
     driver: local

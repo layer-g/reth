@@ -36,5 +36,5 @@ COPY --from=builder /app/target/release/reth /usr/local/bin
 # Copy licenses
 COPY LICENSE-* ./
 
-EXPOSE 30303 30303/udp 9001 8545 8546
+EXPOSE 8545 8546 9001
 ENTRYPOINT ["/usr/local/bin/reth"]

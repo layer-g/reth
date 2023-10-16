@@ -242,6 +242,7 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
 
         // add network name to data dir
         let data_dir = self.datadir.unwrap_or_chain_default(self.chain.chain);
+        debug!(?data_dir, "datadir");
         let config_path = self.config.clone().unwrap_or(data_dir.config_path());
 
         let mut config: Config = self.load_config(config_path.clone())?;
@@ -250,20 +251,21 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         info!(target: "reth::cli", path = ?config_path, "Configuration loaded");
 
         // set db to tempdir if dev flag is passed
-        let db_path = if self.dev.dev {
-            // Error during tempdir creation
-            let temp_path = tempfile::TempDir::new()
-                .expect("Not able to create a temporary directory.").into_path();
-            info!(
-                ?temp_path,
-                "--dev arg passed. Creating temporary database at:\n"
-            );
-            temp_path
-        } else {
-            info!("Creating persistent db at: {:#?}", self.db);
-            // lattice dir
-            data_dir.db_path()
-        };
+        // let db_path = if self.dev.dev {
+        //     // Error during tempdir creation
+        //     let temp_path = tempfile::TempDir::new()
+        //         .expect("Not able to create a temporary directory.").into_path();
+        //     info!(
+        //         ?temp_path,
+        //         "--dev arg passed. Creating temporary database at:\n"
+        //     );
+        //     temp_path
+        // } else {
+        //     info!("Creating persistent db at: {:#?}", self.db);
+        //     // lattice dir
+        //     data_dir.db_path()
+        // };
+        let db_path = data_dir.db_path();
 
         // let db_path = data_dir.db_path();
         info!(target: "reth::cli", path = ?db_path, "Opening database");
@@ -934,7 +936,6 @@ impl<Ext: RethCliExt> LatticeCommand<Ext> {
         // ws port is scaled by a factor of instance * 2
         self.rpc.ws_port += self.instance * 2 - 2;
     }
-
 
     fn build_chain_spec(&mut self) -> eyre::Result<()> {
         let chain = Chain::Id(2600);
