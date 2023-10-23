@@ -88,6 +88,7 @@ use tracing::*;
 
 pub mod cl_events;
 pub mod events;
+pub mod faucet;
 
 /// Start the node
 #[derive(Debug, Parser)]
