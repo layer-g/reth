@@ -8,7 +8,7 @@ use std::{
 use futures::StreamExt;
 use jsonrpsee::{proc_macros::rpc, core::async_trait};
 use lru_time_cache::LruCache;
-use reth_primitives::{Address, TxHash, TransactionSigned, FromRecoveredPooledTransaction, ChainSpec, public_key_to_address, U128, U256, sign_message, Signature, H256};
+use reth_primitives::{Address, TxHash, TransactionSigned, FromRecoveredPooledTransaction, ChainSpec, public_key_to_address, U128, U256, sign_message, Signature, H256, U64};
 use reth_rpc::eth::error::{EthResult, EthApiError, SignError};
 use reth_rpc_types::{TypedTransactionRequest, LegacyTransactionRequest, TransactionRequest, EIP1559TransactionRequest, TransactionKind};
 use reth_tasks::{TokioTaskExecutor, TaskSpawner};
@@ -49,22 +49,26 @@ impl FaucetRpcExtApiServer for FaucetRpcExt {
 
 impl FaucetRpcExt {
     /// Create new instance
-    fn new<Pool>(pool: Pool, config: FaucetConfig) -> Self
+    fn new<Pool>(
+        pool: Pool,
+        config: FaucetConfig,
+        keypair: KeyPair,
+        nonce: u64,
+    ) -> Self
     where
         Pool: TransactionPool + Unpin + Clone + 'static,
     {
         // let wait_period = ::std::time::Duration::from_secs(60 * 60 * 24);
         // let transfer_amount = 5;
         // let config = FaucetConfig { wait_period, transfer_amount };
-        let cache = FaucetCache::spawn(pool, config);
+        let cache = FaucetCache::spawn(
+            pool,
+            config,
+            keypair,
+            nonce,
+        );
 
         Self { cache }
-    }
-
-    /// Calculate the amount of time remaining until the recipient can successfully request
-    /// additional TEL.
-    fn calculate_time_remaining(&self) -> EthResult<SystemTime> {
-        todo!()
     }
 }
 
@@ -78,9 +82,8 @@ pub struct FaucetConfig {
     pub transfer_amount: usize,
 
     /// The chain id
-    pub chain_id: U64,
+    pub chain_id: u64,
 
-    /// 
 }
 
 /// Provides async access to the cached addresses.
@@ -149,7 +152,7 @@ impl FaucetCache {
     where
         Pool: TransactionPool + Unpin + Clone + 'static,
         Tasks: TaskSpawner + Clone + 'static,
-        {
+    {
         let (this, service) = Self::create(
             config,
             pool,
@@ -158,7 +161,7 @@ impl FaucetCache {
             nonce,
         );
 
-        executor.spawn_critical("fauce-cache", Box::pin(service));
+        executor.spawn_critical("faucet cache", Box::pin(service));
         this
     }
 
@@ -200,12 +203,16 @@ where
 
     /// Create a EIP1559 transaction with max fee per gas set to 1 TEL.
     fn create_transaction(&self, to: Address) -> EthResult<TransactionSigned> {
+        // find the tx nonce more reliably?
+    // 30000000
+    // 1000000000
         let request = TypedTransactionRequest::EIP1559(EIP1559TransactionRequest {
             chain_id: self.config.chain_id,
             nonce: self.nonce.into(),
             max_priority_fee_per_gas: U128::ZERO,
-            max_fee_per_gas: U128::from(1_000_000_000), // 1 TEL
-            gas_limit: U256::from(1_000_000_000), // 1 TEL
+            max_fee_per_gas: U128::from(1_000_000), // 1 TEL
+            // gas_limit: U256::from(1_000_000), // 1 TEL
+            gas_limit: U256::from(0), // 1 TEL
             kind: TransactionKind::Call(to),
             value: U256::from(self.config.transfer_amount),
             input: Default::default(),
@@ -275,11 +282,12 @@ where
 
 async fn submit_transaction<Pool>(
     pool: Pool,
-    tx: TransactionSigned,
+    tx: EthResult<TransactionSigned>,
 ) -> EthResult<TxHash>
 where
     Pool: TransactionPool + Clone + 'static,
 {
+    let tx = tx?;
     let recovered = tx.try_into_ecrecovered().or(Err(EthApiError::InvalidTransactionSignature))?;
     let transaction = <Pool::Transaction>::from_recovered_transaction(recovered.into());
     let hash = pool.add_transaction(TransactionOrigin::Local, transaction).await?;
@@ -294,16 +302,17 @@ mod tests {
     use reth_db::test_utils::create_test_rw_db;
     use reth_interfaces::test_utils::TestConsensus;
     use reth_primitives::{SealedBlock, BlockBody, ChainSpec, Genesis, GenesisAccount, U256, public_key_to_address, ChainSpecBuilder};
-    use reth_provider::{ProviderFactory, BlockWriter, providers::BlockchainProvider};
+    use reth_provider::{ProviderFactory, BlockWriter, providers::BlockchainProvider, StateProviderFactory};
     use reth_revm::{Factory, primitives::ruint::aliases::B256};
     use reth_transaction_pool::{blobstore::InMemoryBlobStore, TransactionValidationTaskExecutor, PoolConfig};
     use secp256k1::{rand, KeyPair, Secp256k1};
+    use hex_literal::hex;
     use crate::init::init_genesis;
 
     use super::*;
 
     #[tokio::test]
-    async fn test_request() {
+    async fn test_successful_request() {
         // create pool
         let db = create_test_rw_db();
         let mut rng = rand::thread_rng();
@@ -316,7 +325,8 @@ mod tests {
         let genesis = genesis(address);
         let chain = custom_chain(genesis);
         let factory = ProviderFactory::new(db.as_ref(), Arc::clone(&chain));
-        // let provider = factory.provider_rw().unwrap();
+
+        // init genesis
         let genesis_hash = init_genesis(db.clone(), chain.clone());
         let consensus = Arc::new(TestConsensus::default());
 
@@ -330,7 +340,7 @@ mod tests {
         let tree_config = BlockchainTreeConfig::default();
         // The size of the broadcast is twice the maximum reorg depth, because at maximum reorg
         // depth at least N blocks must be sent at once.
-        let (canon_state_notification_sender, _receiver) =
+        let (canon_state_notification_sender, mut canon_receiver) =
             tokio::sync::broadcast::channel(tree_config.max_reorg_depth() as usize * 2);
         let blockchain_tree = ShareableBlockchainTree::new(
             BlockchainTree::new(
@@ -343,7 +353,7 @@ mod tests {
 
         // setup the blockchain provider
         let factory = ProviderFactory::new(Arc::clone(&db), Arc::clone(&chain));
-        let blockchain_db = BlockchainProvider::new(factory, blockchain_tree.clone())?;
+        let blockchain_db = BlockchainProvider::new(factory, blockchain_tree.clone()).unwrap();
         let blob_store = InMemoryBlobStore::default();
         let validator = TransactionValidationTaskExecutor::eth_builder(Arc::clone(&chain))
             .with_additional_tasks(1)
@@ -354,9 +364,33 @@ mod tests {
 
         let config = FaucetConfig {
             wait_period:Duration::from_secs(1),
-            transfer_amount:1,
-            chain_id: 2600 // chain config 
+            transfer_amount: 1,
+            chain_id: chain.chain().id(),
         };
+
+        let first_nonce = blockchain_db.latest().unwrap().account_nonce(address).unwrap().unwrap_or_default();
+        println!("\nfirst nonce: {first_nonce:?}\n");
+
+        let faucet = FaucetCache::spawn(transaction_pool.clone(), config, keypair, first_nonce);
+
+        let requesting_address = Address::from_low_u64_be(33);
+        println!("\nrequesting address: {requesting_address:?}");
+        let hash = faucet.handle_request(address).await.unwrap();
+        let expected_hash = hex!("77ccece143a6cf9611aa76d0e3d989abd41e1475e6b722337e9de75f90dd74cf").into();
+        println!("\nhash: {hash:?}\n");
+        assert_eq!(hash, expected_hash);
+        let update = canon_receiver.recv().await.unwrap();
+
+        println!("\nupdate: {update:?}\n");
+
+        let new_balance = blockchain_db
+            .latest()
+            .unwrap()
+            .account_balance(requesting_address)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(new_balance, U256::from(1));
     }
 
     fn genesis(address: Address) -> Genesis {
@@ -381,7 +415,7 @@ mod tests {
             merge_netsplit_block: Some(0),
             shanghai_time: Some(0),
             cancun_time: Some(0),
-            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty: Some(U256::ZERO),
             terminal_total_difficulty_passed: true,
             ethash: None,
             clique: None,
@@ -390,8 +424,7 @@ mod tests {
         let alloc = HashMap::from([
             (address, GenesisAccount::default().with_balance(U256::MAX))
         ]);
-        // Genesis::default()
-        //     .extend_accounts(accounts)
+
         Genesis {
             config,
             nonce: 0,

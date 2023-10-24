@@ -301,13 +301,13 @@ where
 ///
 /// One `Eta` is only valid for a single stage.
 #[derive(Default)]
-struct Eta {
+pub(crate) struct Eta {
     /// The last stage checkpoint
-    last_checkpoint: EntitiesCheckpoint,
+    pub(crate)last_checkpoint: EntitiesCheckpoint,
     /// The last time the stage reported its checkpoint
-    last_checkpoint_time: Option<Instant>,
+    pub(crate)last_checkpoint_time: Option<Instant>,
     /// The current ETA
-    eta: Option<Duration>,
+    pub(crate)eta: Option<Duration>,
 }
 
 impl Eta {
