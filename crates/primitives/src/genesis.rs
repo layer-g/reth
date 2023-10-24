@@ -1,3 +1,4 @@
+//! Genesis
 use crate::{
     keccak256,
     proofs::EMPTY_ROOT,

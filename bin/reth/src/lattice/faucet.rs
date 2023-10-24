@@ -8,7 +8,7 @@ use std::{
 use futures::StreamExt;
 use jsonrpsee::{proc_macros::rpc, core::async_trait};
 use lru_time_cache::LruCache;
-use reth_primitives::{Address, TxHash, TransactionSigned, FromRecoveredPooledTransaction, ChainSpec, public_key_to_address, U128, U256, Bytes, sign_message, H256, Signature};
+use reth_primitives::{Address, TxHash, TransactionSigned, FromRecoveredPooledTransaction, ChainSpec, public_key_to_address, U128, U256, sign_message, Signature, H256};
 use reth_rpc::eth::error::{EthResult, EthApiError, SignError};
 use reth_rpc_types::{TypedTransactionRequest, LegacyTransactionRequest, TransactionRequest, EIP1559TransactionRequest, TransactionKind};
 use reth_tasks::{TokioTaskExecutor, TaskSpawner};
@@ -289,13 +289,13 @@ where
 #[cfg(test)]
 mod tests {
     use std::{sync::Arc, collections::HashMap};
-
+    use reth_primitives::genesis::ChainConfig;
     use reth_blockchain_tree::{BlockchainTree, ShareableBlockchainTree, BlockchainTreeConfig, TreeExternals};
     use reth_db::test_utils::create_test_rw_db;
     use reth_interfaces::test_utils::TestConsensus;
-    use reth_primitives::{SealedBlock, BlockBody, ChainSpec, Genesis, GenesisAccount, U256, public_key_to_address};
+    use reth_primitives::{SealedBlock, BlockBody, ChainSpec, Genesis, GenesisAccount, U256, public_key_to_address, ChainSpecBuilder};
     use reth_provider::{ProviderFactory, BlockWriter, providers::BlockchainProvider};
-    use reth_revm::Factory;
+    use reth_revm::{Factory, primitives::ruint::aliases::B256};
     use reth_transaction_pool::{blobstore::InMemoryBlobStore, TransactionValidationTaskExecutor, PoolConfig};
     use secp256k1::{rand, KeyPair, Secp256k1};
     use crate::init::init_genesis;
@@ -353,16 +353,59 @@ mod tests {
             reth_transaction_pool::Pool::eth_pool(validator, blob_store, PoolConfig::default());
 
         let config = FaucetConfig {
-            wait_period: Duration::from_secs(1),
-            transfer_amount: 1,
+            wait_period:Duration::from_secs(1),
+            transfer_amount:1,
+            chain_id: 2600 // chain config 
         };
     }
 
     fn genesis(address: Address) -> Genesis {
-        let accounts = HashMap::from([
+        let config = ChainConfig {
+            chain_id: 2600,
+            homestead_block: Some(0),
+            dao_fork_block: Some(0),
+            dao_fork_support: false,
+            eip150_block: Some(0),
+            eip150_hash: Some(H256::zero().into()),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            muir_glacier_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            arrow_glacier_block: Some(0),
+            gray_glacier_block: Some(0),
+            merge_netsplit_block: Some(0),
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            terminal_total_difficulty: Some(0),
+            terminal_total_difficulty_passed: true,
+            ethash: None,
+            clique: None,
+        };
+
+        let alloc = HashMap::from([
             (address, GenesisAccount::default().with_balance(U256::MAX))
         ]);
-        Genesis::default().extend_accounts(accounts)
+        // Genesis::default()
+        //     .extend_accounts(accounts)
+        Genesis {
+            config,
+            nonce: 0,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+            extra_data: Default::default(),
+            gas_limit: 21_000,
+            difficulty: Default::default(),
+            mix_hash: Default::default(),
+            coinbase: Default::default(),
+            alloc,
+            base_fee_per_gas: Some(100),
+            excess_blob_gas: None,
+            blob_gas_used: None,
+        }
     }
 
     fn custom_chain(genesis: Genesis) -> Arc<ChainSpec> {

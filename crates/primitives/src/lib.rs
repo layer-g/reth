@@ -30,7 +30,7 @@ pub mod contract;
 pub mod eip4844;
 mod forkid;
 pub mod fs;
-mod genesis;
+pub mod genesis;
 mod hardfork;
 mod header;
 mod hex_bytes;
