@@ -67,6 +67,20 @@ pub type RethFullProviderType<DB, Evm> =
 pub type RethFullAdapter<DB, N> =
     FullNodeTypesAdapter<N, DB, RethFullProviderType<DB, <N as NodeTypes>::Evm>>;
 
+/// The builtin [ComponentsState] type for launching a node.
+pub type RethFullBuilderState<DB, Types, Components> = ComponentsState<
+    Types,
+    Components,
+    FullNodeComponentsAdapter<
+        RethFullAdapter<DB, Types>,
+        <Components as NodeComponentsBuilder<RethFullAdapter<DB, Types>>>::Pool,
+    >,
+>;
+
+/// The builtin [NodeBuilder] type for launching a node.
+pub type RethFullNodeBuilder<DB, Types, Components> =
+    NodeBuilder<DB, RethFullBuilderState<DB, Types, Components>>;
+
 #[cfg_attr(doc, aquamarine::aquamarine)]
 /// Declaratively construct a node.
 ///

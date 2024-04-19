@@ -1,7 +1,7 @@
 //! Trait to launch the node and default implementation.
 
 use crate::{
-    components::{ComponentsBuilder, NodeComponents, NodeComponentsBuilder, PoolBuilder}, exex::BoxedLaunchExEx, hooks::NodeHooks, node::FullNode, rpc::{RethRpcServerHandles, RpcContext, RpcHooks}, BuilderContext, ComponentsState, Node, NodeHandle, RethFullProviderType
+    components::{ComponentsBuilder, NodeComponents, NodeComponentsBuilder, PoolBuilder}, exex::BoxedLaunchExEx, hooks::NodeHooks, node::FullNode, rpc::{RethRpcServerHandles, RpcContext, RpcHooks}, BuilderContext, ComponentsState, Node, NodeHandle, RethFullAdapter, RethFullBuilderState, RethFullProviderType
 };
 use eyre::Context;
 use futures::{future, future::Either, stream, stream_select, Future, StreamExt};
@@ -53,28 +53,24 @@ use std::{cmp::max, str::FromStr, sync::Arc, thread::available_parallelism};
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 
 /// Launch the node.
-pub trait LaunchNode<DB, Types, Components, Node>
+pub trait LaunchNode<DB, Types, Components>
 where
-    Node: FullNodeComponents,
-    // Types: FullNodeTypes,
-    // Types: 
     DB: Database + Clone + Unpin + 'static,
+    Types: NodeTypes,
+    Components: NodeComponentsBuilder<RethFullAdapter<DB, Types>> + NodeTypes,
 {
     /// Build components and launch the node.
     fn launch(
         self,
-        args: LaunchArgs<DB, Types, Components, Node>,
+        args: LaunchArgs<DB, Types, Components>,
     ) -> impl Future<Output = eyre::Result<NodeHandle<
-            FullNodeComponentsAdapter<
-                FullNodeTypesAdapter<Node, DB, RethFullProviderType<DB, Node::Evm>>,
-                Node::Pool,
-            >,
+        FullNodeComponentsAdapter<RethFullAdapter<DB, Types>, Components::Pool>
 >>>;
 }
 
-pub struct LaunchArgs<DB, Types, Components, Node: FullNodeComponents> {
+pub struct LaunchArgs<DB, Types: NodeTypes, Components> {
     pub config: NodeConfig,
-    pub components: ComponentsState<Types, Components, Node>,
+    pub components: RethFullBuilderState<DB, Types, Components>,
     pub database: DB,
     pub executor: TaskExecutor,
     pub data_dir: ChainPath<DataDirPath>,
@@ -85,23 +81,19 @@ pub struct LaunchArgs<DB, Types, Components, Node: FullNodeComponents> {
 #[derive(Debug)]
 pub struct DefaultLauncher;
 
-impl<DB, Types, Components, Node> LaunchNode<DB, Types, Components, Node> for DefaultLauncher
+impl<DB, Types, Components> LaunchNode<DB, Types, Components> for DefaultLauncher
 where
     DB: Database + DatabaseMetrics + DatabaseMetadata + Clone + Unpin + 'static,
-    Components: NodeComponentsBuilder<
-        FullNodeTypesAdapter<Types, DB, RethFullProviderType<DB, Types::Evm>>,
-    >,
     Types: NodeTypes,
-    Node: FullNodeComponents,
+    Components: NodeComponentsBuilder<
+        RethFullAdapter<DB, Types>,
+    > + NodeTypes,
 {
     async fn launch(
         self,
-        args: LaunchArgs<DB, Types, Components, Node>,
+        args: LaunchArgs<DB, Types, Components>,
     ) -> eyre::Result<NodeHandle<
-            FullNodeComponentsAdapter<
-                FullNodeTypesAdapter<Node, DB, RethFullProviderType<DB, Node::Evm>>,
-                Node::Pool,
-            >,
+    FullNodeComponentsAdapter<RethFullAdapter<DB, Types>, Components::Pool>
 >> {
         // get config from file
         // let reth_config = self.load_config(&data_dir)?;
