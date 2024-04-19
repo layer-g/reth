@@ -61,10 +61,10 @@ use tokio::sync::{mpsc::unbounded_channel, oneshot};
 
 /// The builtin provider type of the reth node.
 // Note: we need to hardcode this because custom components might depend on it in associated types.
-type RethFullProviderType<DB, Evm> =
+pub type RethFullProviderType<DB, Evm> =
     BlockchainProvider<DB, ShareableBlockchainTree<DB, EvmProcessorFactory<Evm>>>;
 
-type RethFullAdapter<DB, N> =
+pub type RethFullAdapter<DB, N> =
     FullNodeTypesAdapter<N, DB, RethFullProviderType<DB, <N as NodeTypes>::Evm>>;
 
 #[cfg_attr(doc, aquamarine::aquamarine)]
@@ -1213,19 +1213,19 @@ where
 /// Captures the necessary context for building the components of the node.
 pub struct BuilderContext<Node: FullNodeTypes> {
     /// The current head of the blockchain at launch.
-    head: Head,
+    pub head: Head,
     /// The configured provider to interact with the blockchain.
-    provider: Node::Provider,
+    pub provider: Node::Provider,
     /// The executor of the node.
-    executor: TaskExecutor,
+    pub executor: TaskExecutor,
     /// The data dir of the node.
-    data_dir: ChainPath<DataDirPath>,
+    pub data_dir: ChainPath<DataDirPath>,
     /// The config of the node
-    config: NodeConfig,
+    pub config: NodeConfig,
     /// loaded config
-    reth_config: reth_config::Config,
+    pub reth_config: reth_config::Config,
     /// EVM config of the node
-    evm_config: Node::Evm,
+    pub evm_config: Node::Evm,
 }
 
 impl<Node: FullNodeTypes> BuilderContext<Node> {
@@ -1390,15 +1390,15 @@ where
 /// node's launch lifecycle.
 pub struct ComponentsState<Types, Components, FullNode: FullNodeComponents> {
     /// The types of the node.
-    types: Types,
+    pub types: Types,
     /// Type that builds the components of the node.
-    components_builder: Components,
+    pub components_builder: Components,
     /// Additional NodeHooks that are called at specific points in the node's launch lifecycle.
-    hooks: NodeHooks<FullNode>,
+    pub hooks: NodeHooks<FullNode>,
     /// Additional RPC hooks.
-    rpc: RpcHooks<FullNode>,
+    pub rpc: RpcHooks<FullNode>,
     /// The ExExs (execution extensions) of the node.
-    exexs: Vec<(String, Box<dyn BoxedLaunchExEx<FullNode>>)>,
+    pub exexs: Vec<(String, Box<dyn BoxedLaunchExEx<FullNode>>)>,
 }
 
 impl<Types, Components, FullNode: FullNodeComponents> std::fmt::Debug
