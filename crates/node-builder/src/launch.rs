@@ -53,57 +53,68 @@ use std::{cmp::max, str::FromStr, sync::Arc, thread::available_parallelism};
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 
 /// Launch the node.
-pub trait LaunchNode {
+pub trait LaunchNode<DB, Types, Components, Node>
+where
+    Node: FullNodeComponents,
+    // Types: FullNodeTypes,
+    // Types: 
+    DB: Database + Clone + Unpin + 'static,
+{
     /// Build components and launch the node.
-    fn launch<Node: FullNodeComponents>(self) -> impl Future<Output = eyre::Result<NodeHandle<Node>>>;
+    fn launch(
+        self,
+        args: LaunchArgs<DB, Types, Components, Node>,
+    ) -> impl Future<Output = eyre::Result<NodeHandle<
+            FullNodeComponentsAdapter<
+                FullNodeTypesAdapter<Node, DB, RethFullProviderType<DB, Node::Evm>>,
+                Node::Pool,
+            >,
+>>>;
 }
 
-/// Default ethererum node launch
-#[derive(Debug)]
-pub struct DefaultLauncher<DB, Components> {
+pub struct LaunchArgs<DB, Types, Components, Node: FullNodeComponents> {
     pub config: NodeConfig,
-    pub components: Components,
+    pub components: ComponentsState<Types, Components, Node>,
     pub database: DB,
     pub executor: TaskExecutor,
     pub data_dir: ChainPath<DataDirPath>,
     pub reth_config: reth_config::Config,
 }
 
-impl<DB, Components, Types> LaunchNode for DefaultLauncher<DB, 
-        ComponentsState<
-            Types,
-            Components,
-            FullNodeComponentsAdapter<
-                FullNodeTypesAdapter<Types, DB, RethFullProviderType<DB, Types::Evm>>,
-                Components::Pool,
-            >,
-        >,
->
+/// Default ethererum node launch
+#[derive(Debug)]
+pub struct DefaultLauncher;
+
+impl<DB, Types, Components, Node> LaunchNode<DB, Types, Components, Node> for DefaultLauncher
 where
     DB: Database + DatabaseMetrics + DatabaseMetadata + Clone + Unpin + 'static,
     Components: NodeComponentsBuilder<
         FullNodeTypesAdapter<Types, DB, RethFullProviderType<DB, Types::Evm>>,
     >,
     Types: NodeTypes,
+    Node: FullNodeComponents,
 {
-    async fn launch<Node: FullNodeComponents>(self) -> eyre::Result<NodeHandle<
+    async fn launch(
+        self,
+        args: LaunchArgs<DB, Types, Components, Node>,
+    ) -> eyre::Result<NodeHandle<
             FullNodeComponentsAdapter<
-                FullNodeTypesAdapter<Types, DB, RethFullProviderType<DB, Types::Evm>>,
-                Components::Pool,
+                FullNodeTypesAdapter<Node, DB, RethFullProviderType<DB, Node::Evm>>,
+                Node::Pool,
             >,
 >> {
         // get config from file
         // let reth_config = self.load_config(&data_dir)?;
         // let reth_config = self.reth_config.clone();
 
-        let Self {
+        let LaunchArgs {
             config,
             components: ComponentsState { types, components_builder, hooks, rpc, exexs },
             database,
             executor,
             data_dir,
             reth_config,
-        } = self;
+        } = args;
 
         // Raise the fd limit of the process.
         // Does not do anything on windows.
