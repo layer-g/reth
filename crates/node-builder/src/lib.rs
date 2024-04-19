@@ -28,6 +28,8 @@ pub mod rpc;
 
 pub mod setup;
 
+pub mod launch;
+
 /// Support for installing the ExExs (execution extensions) in a node.
 pub mod exex;
 
